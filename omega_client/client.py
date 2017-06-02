@@ -10,7 +10,7 @@ LOCAL_CONFIG_PATH = '/var/omega-config/'
 
 """
 
-Will be finished when the DayZ SA server files are being released.
+Will be finished on release of the DayZ SA server files
 """
 
 class OmegaClient(object):

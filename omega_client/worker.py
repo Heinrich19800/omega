@@ -5,7 +5,7 @@ from rcon import BattleEyeRcon
 
 """
 
-Will be finished when the DayZ SA server files are being released.
+Will be finished on release of the DayZ SA server files
 """
 
 class OmegaWorker(object):
