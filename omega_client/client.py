@@ -2,6 +2,7 @@ import requests
 import socket
 import time
 import threading
+import json
 
 from cexceptions import *
 from worker import OmegaWorker
@@ -56,21 +57,25 @@ class OmegaClient(object):
                     action
                 )
                 
-    def request(self, endpoint, val, action, data = None, special=''):
-        response = requests.get(
+    def request(self, endpoint, val, action, request_data = {}, special=''):
+        response = requests.post(
             self._build_url(endpoint, val, action, special),
-            headers={'Authorization': 'Bearer {}'.format(self.access_token)},
-            data=data
+            headers={
+                'Authorization': 'Bearer {}'.format(self.access_token), 
+                'client_id': self.client_id
+            },
+            data=request_data
             ).json()
-            
+        
         if not response.get('success') and response.get('error_message') == 'expired token':
             self.register()
-            return self.request(endpoint, val, action, data)
+            return self.request(endpoint, val, action, request_data)
             
         return response
         
     def register(self):
         response = self.request('auth', self.client_id, 'register')
+
         if response.get('success'):
             self.access_token = response.get('access_token')
         else:
