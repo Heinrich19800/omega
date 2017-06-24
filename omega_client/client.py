@@ -7,6 +7,7 @@ import json
 from cexceptions import *
 from worker import OmegaWorker
 
+
 LOCAL_CONFIG_PATH = '/var/omega-config/'
 
 """
@@ -35,8 +36,8 @@ class OmegaClient(object):
         self.retrieve_service_status()
         if not serverlist:
             self.retrieve_assigned_servers()
-        else:
-            self.verify_serverlist(serverlist)
+        #else:
+        #    self.verify_serverlist(serverlist)
         
     def _build_url(self, endpoint='', val='', action='', special=''):
         if special:
@@ -57,19 +58,27 @@ class OmegaClient(object):
                     action
                 )
                 
-    def request(self, endpoint, val, action, request_data = {}, special=''):
-        response = requests.post(
-            self._build_url(endpoint, val, action, special),
-            headers={
-                'Authorization': 'Bearer {}'.format(self.access_token), 
-                'client_id': self.client_id
-            },
-            data=request_data
-            ).json()
+    def request(self, endpoint, val, action, payload = {}, special=''):
+        try:
+            response = requests.post(
+                self._build_url(endpoint, val, action, special),
+                headers={
+                    'Authorization': 'Bearer {}'.format(self.access_token), 
+                    'client_id': self.client_id
+                },
+                json=payload
+                ).json()
+        
+        except requests.exceptions.ConnectionError as e:
+            #TODO: further error handling needed
+            # - shutdown client instance?
+            # - loop till connection established?
+            # - block requests till connection reestablished?
+            raise Exception('Cant connect to licensing server') 
         
         if not response.get('success') and response.get('error_message') == 'expired token':
             self.register()
-            return self.request(endpoint, val, action, request_data)
+            return self.request(endpoint, val, action, payload)
             
         return response
         
@@ -121,7 +130,7 @@ class OmegaClient(object):
 
     def load_servers(self, serverlist):
         for server in serverlist:
-            self.servers[server] = Thread(target=OmegaWorker, name="workerthread-{}".format(server), args=(server, self,))
+            self.servers[server] = threading.Thread(target=OmegaWorker, name="workerthread-{}".format(server), args=(server, self,))
             self.servers[server].setDaemon(True)
             self.servers[server].start()
 		    
@@ -133,4 +142,24 @@ class OmegaClient(object):
             
         else:
             return None
+            
+    def _worker_reinitiate(self, server_id, reason=''):
+        if server_id not in self.servers:
+            return
         
+        print '[WorkerThread-{}] Reinitiate due to: {}'.format(server_id, reason)
+    
+        del self.servers[server]
+        self.servers[server] = Thread(target=OmegaWorker, name="workerthread-{}".format(server), args=(server, self,))
+        self.servers[server].setDaemon(True)
+        self.servers[server].start()
+        
+    def _server_offline(self, server_id):
+        self.request('server', server_id, 'state', {'state': 0})
+    
+    def _server_online(self, server_id):
+        self.request('server', server_id, 'state', {'state': 2})
+    
+    def _server_started(self, server_id):
+        self.request('server', server_id, 'state', {'state': 1})
+    

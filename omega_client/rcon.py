@@ -3,6 +3,7 @@ import threading
 import struct
 import binascii
 import time
+import re
 
 """
 
@@ -34,7 +35,33 @@ class BattleEyeRcon(threading.Thread):
        'data': {
             'recieved': [],
             'sent': []
+       },
+       'event': {
+            'player_guid': [],
+            'player_connect': [],
+            'player_disconnect': [],
+            'player_list': [],
+            'player_chat': []
        }
+    }
+
+    _regex = {
+        'player_guid': {
+            'regex': r'Verified GUID \((.*)\) of player #([0-9]+) (.*)',
+            'identification_string': ['Verified GUID']
+        },
+        'player_connect': {
+            'regex': r'Player #([0-9]+) (.*) \((.*):(.*)\) connected',
+            'identification_string': ['Player #', 'connected']
+        },
+        'player_disconnect': {
+            'regex': r'Player #([0-9]+) (.*) disconnected',
+            'identification_string': ['Player #', 'disconnected']
+        },
+        'player_list': {
+            'regex': r'(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)',
+            'identification_string': ['Players on server:']
+        }
     }
 
     def __init__(self, host, port, password):
@@ -47,6 +74,7 @@ class BattleEyeRcon(threading.Thread):
 
         self.register_callback('connection', 'authenticated', self._callback_authenticated)
         self.register_callback('connection', 'authentication_failed', self._callback_authentication_failed)
+        self.register_callback('data', 'recieved', self._callback_data_recieved)
 
     def shutdown_server(self):
         self.command('#shutdown')
@@ -54,15 +82,15 @@ class BattleEyeRcon(threading.Thread):
     def restart_server(self):
         self.command('#restartserver')
 
-    def kick_player(self, slot):
-        command = 'kick {}'.format(slot)
+    def kick_player(self, slot, reason='You have been kicked from the server'):
+        command = 'kick {} {}'.format(slot, reason)
         self.command(command)
 
     def say_all(self, message, slot=-1):
         command = 'say {} {}'.format(slot, message)
         self.command(command)
 
-    def say_player(self, message, slot):
+    def say_player(self, slot, message):
         command = 'say {} {}'.format(slot, message)
         self.command(command)
 
@@ -152,7 +180,6 @@ class BattleEyeRcon(threading.Thread):
     def command(self, command):
         message = self.build_message(command)
         self._socket.send(message)
-        print 'Send command: {}, ({})'.format(command, message)
         
     def connect(self):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -227,10 +254,10 @@ class BattleEyeRcon(threading.Thread):
                     self._trigger_callback('connection', 'keepalive_acknowledged')
 
                 else:
-                    print response
+                    self._trigger_callback('data', 'recieved', response.get('data'))
                     
             elif response.get('message_type') == 2:
-                print response
+                self._trigger_callback('data', 'recieved', response.get('data'))
 
             else:
                 print response
@@ -242,11 +269,74 @@ class BattleEyeRcon(threading.Thread):
             time.sleep(self._keepalive_interval)
 
     def _callback_authenticated(self, *_):
-        print 'authenticated'
         self._keepalive_thread.start()
         self._authenticated = True
+        self.command('players')
 
     def _callback_authentication_failed(self, *_):
         self._authenticated = False
         raise BattleEyeRconException('login failed')
-        
+
+    def _callback_data_recieved(self, data):
+        regex_chat = '\((.*)\) (.*): (.*)'
+        regex_lobby = '(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)'
+        regex_ingame = '(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)'
+        for event_type, event in self._regex.iteritems():
+            valid = True
+            for identification_string in event.get('identification_string'):
+                if identification_string not in data:
+                    valid = False
+                    break
+
+            if not valid:
+                continue
+
+            else:
+                if event_type == 'player_list':
+                    players = []
+                    player_list = data.split('\n')
+                    del player_list[0:3]
+                    del player_list[-1]
+                    
+                    for player in player_list:
+                        try:
+                            player_data = re.search(regex_lobby, player).groups()
+                            lobby = True
+                        
+                        except Exception as e:
+                            try:
+                                player_data = re.search(regex_ingame, player).groups()
+                                lobby = False
+                                
+                            except Exception as e:
+                                #probably not fully connected <.<
+                                continue
+                            
+                        players.append({
+                            'slot': player_data[0],
+                            'ip': player_data[1].split(':')[0],
+                            'ping': int(player_data[2]),
+                            'guid': player_data[3],
+                            'name': player_data[4],
+                            'lobby': lobby
+                        })
+                        
+                    return self._trigger_callback('event', event_type, players)
+                    
+                else:
+                    try:
+                        event_data = re.search(event.get('regex'), data).groups()
+                        self._trigger_callback('event', event_type, event_data)
+                        
+                    except Exception as e:
+                        pass
+                    
+                    else:
+                        return
+                    
+        try:
+            chat_data = re.search(regex_chat, data).groups()
+            self._trigger_callback('event', 'player_chat', chat_data)
+            
+        except Exception as e:
+            print 'unknown data: {}'.format(data)
