@@ -17,8 +17,7 @@ Will be finished on release of the DayZ SA server files
 
 class OmegaClient(object):
     host = ''
-    port = 24002
-    protocol = 'http'
+    protocol = 'https'
     
     access_token = ''
     
@@ -26,9 +25,8 @@ class OmegaClient(object):
     
     status = {}
     
-    def __init__(self, client_id, host='philippj.de', port=24002, protocol='http', serverlist=[]):
+    def __init__(self, client_id, host='cfbackend.de', protocol='https', serverlist=[]):
         self.host = host
-        self.port = port
         self.protocol = protocol
         
         self.client_id = client_id
@@ -41,18 +39,16 @@ class OmegaClient(object):
         
     def _build_url(self, endpoint='', val='', action='', special=''):
         if special:
-            return '{}://{}:{}/{}'.format(
+            return '{}://{}/{}'.format(
                     self.protocol, 
-                    self.host, 
-                    self.port,
+                    self.host,
                     special
                 )
             
         else:
-            return '{}://{}:{}/{}/{}/{}'.format(
+            return '{}://{}/{}/{}/{}'.format(
                     self.protocol, 
-                    self.host, 
-                    self.port,
+                    self.host,
                     endpoint, 
                     val,
                     action
