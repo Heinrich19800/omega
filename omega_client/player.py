@@ -29,9 +29,9 @@ class OmegaPlayer(object):
         
         self.slot = slot
         self.name = name
-        self.ip = ip
         self._session_start = time()
-        self._location = OmegaLocation(self.ip)
+        self._location = OmegaLocation(ip)
+        self.ip = '.'.join(ip.split('.')[0:3]) #german law things...
         
     def __del__(self):
         playtime = time()-self._session_start

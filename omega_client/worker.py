@@ -47,6 +47,7 @@ class OmegaWorker(threading.Thread):
             'disconnect': [],
             'guid': [],
             'chat': [],
+            'kick': [],
             'ping_update': []
         }
     }
@@ -59,14 +60,15 @@ class OmegaWorker(threading.Thread):
         self.server_id = server_id
         self._client = client
 
-        self._load_modules()      
-
+              
         try:
             self.load_config()
             
         except OmegaWorkerError as exception:
             self.stop(wait=True)
             self._client._worker_reinitiate(self.server_id, 'local_config_not_found')
+            
+        self._load_modules()
         
         self.start()
 
@@ -95,6 +97,13 @@ class OmegaWorker(threading.Thread):
             }
             self._modules.append(module)
             print '[MODULE] {} by {} loaded'.format(module.get('name'), module.get('author'))
+            
+    def get_module_config(self, module_config_id):
+        if module_config_id not in self.config.get('modules'):
+            return False
+            
+        else:
+            return self.config.get('modules').get(module_config_id)
             
     def register_callback(self, endpoint, action, method_reference):
         if endpoint not in self._callbacks:
@@ -131,6 +140,7 @@ class OmegaWorker(threading.Thread):
         self._rcon.register_callback('event', 'player_guid', self._player_guid)
         self._rcon.register_callback('event', 'player_list', self._player_list)
         self._rcon.register_callback('event', 'player_chat', self._player_chat)
+        self._rcon.register_callback('event', 'be_kick', self._player_kick)
         
     def _start_rcon(self):
         self._client._server_started(self.server_id)
@@ -142,9 +152,13 @@ class OmegaWorker(threading.Thread):
     def _rcon_authenticated(self, *_):
         self._ready = True
         self._client._server_online(self.server_id)
+        self._rcon.say_all('----------------------------')
+        self._rcon.say_all('------- CFTools --------')
+        self._rcon.say_all('----------------------------')
+        self._rcon.say_all('Omega Admintool started.')
         
     def _rcon_authentication_failed(self, *_):
-        self.stop(wait=True)
+        self.stop(wait=True, timeout=5)
         self._client._worker_reinitiate(self.server_id, 'rcon_authentication_failed')
         
     def _player_connected(self, player_data):
@@ -198,6 +212,16 @@ class OmegaWorker(threading.Thread):
                     self._trigger_callback('player', 'ping_update', 
                                         self.players[player.get('slot')])
     
+    def _player_kick(self, kick_data):
+        kick_data = {
+            'player': self.guid_to_player(kick_data[0]),
+            'method': kick_data[1],
+            'reason': kick_data[2]
+        }
+        
+        self._trigger_callback('player', 'kick', kick_data)
+        del self.players[kick_data.get('player').slot]
+    
     def _player_chat(self, chat_data):
         chat_data = {
             'destination': chat_data[0].lower(),
@@ -207,7 +231,7 @@ class OmegaWorker(threading.Thread):
 
         self._trigger_callback('player', 'chat', {
                 'player': self.name_to_player(chat_data.get('name')), 
-                'player': chat_data
+                'message_data': chat_data
         })
 
     def _update_player_online_state(self, state, omega_id, server=''):
@@ -225,6 +249,25 @@ class OmegaWorker(threading.Thread):
                 return player
                 
         return None
+        
+    def guid_to_player(self, guid):
+        for slot, player in self.players.iteritems():
+            if player.guid == guid:
+                return player
+                
+        return None
+        
+    def find_player_by_name(self, name):
+        results = []
+        
+        if len(name) < 3:
+            return results
+        
+        for slot, player in self.players.iteritems():
+            if name.lower() in player.name.lower():
+                results.append(player)
+                
+        return results
     
     def run(self):
         if not self._active:
@@ -250,8 +293,9 @@ class OmegaWorker(threading.Thread):
                     
         self._running = False
     
-    def stop(self, wait=False):
+    def stop(self, wait=False, timeout=0):
         self._active = False
         if wait:
             while self._running:
                 time.sleep(.1)
+            time.sleep(timeout)

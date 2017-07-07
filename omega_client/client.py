@@ -149,10 +149,10 @@ class OmegaClient(object):
         
         print '[WorkerThread-{}] Reinitiate due to: {}'.format(server_id, reason)
     
-        del self.servers[server]
-        self.servers[server] = Thread(target=OmegaWorker, name="workerthread-{}".format(server), args=(server, self,))
-        self.servers[server].setDaemon(True)
-        self.servers[server].start()
+        del self.servers[server_id]
+        self.servers[server_id] = threading.Thread(target=OmegaWorker, name="workerthread-{}".format(server_id), args=(server_id, self,))
+        self.servers[server_id].setDaemon(True)
+        self.servers[server_id].start()
         
     def _server_offline(self, server_id):
         self.request('server', server_id, 'state', {'state': 0})

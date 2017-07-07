@@ -38,10 +38,15 @@ class BattleEyeRcon(threading.Thread):
        },
        'event': {
             'player_guid': [],
+            'player_unverified_guid': [],
             'player_connect': [],
             'player_disconnect': [],
             'player_list': [],
-            'player_chat': []
+            'be_kick': [],
+            'player_chat': [],
+            'rcon_message': [],
+            'rcon_admin_login': [],
+            'unable_to_recieve': []
        }
     }
 
@@ -49,6 +54,10 @@ class BattleEyeRcon(threading.Thread):
         'player_guid': {
             'regex': r'Verified GUID \((.*)\) of player #([0-9]+) (.*)',
             'identification_string': ['Verified GUID']
+        },
+        'player_unverified_guid': {
+            'regex': r'Player #([0-9]+) (.*) - GUID: (.*)',
+            'identification_string': ['Player', 'GUID']
         },
         'player_connect': {
             'regex': r'Player #([0-9]+) (.*) \((.*):(.*)\) connected',
@@ -61,14 +70,30 @@ class BattleEyeRcon(threading.Thread):
         'player_list': {
             'regex': r'(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)',
             'identification_string': ['Players on server:']
+        },
+        'be_kick': {
+            'regex': r'\((.*)\) has been kicked by BattlEye: (.*) \((.*)\)',
+            'identification_string': ['has been kicked by BattlEye']
+        },
+        'rcon_message': {
+            'regex': r'RCon admin #([0-9]+): \((.*)\) (.*)',
+            'identification_string': ['RCon admin #', ': ']
+        },
+        'rcon_admin_login': {
+            'regex': r'RCon admin #([0-9]+) \((.*)\) logged in',
+            'identification_string': ['RCon admin #', 'logged in']
+        },
+        'unable_to_recieve': {
+            'regex': r'(.*)',
+            'identification_string': ['Player is unable to receive the message']
         }
     }
 
     def __init__(self, host, port, password):
         threading.Thread.__init__(self)
         
-        self.host = host
-        self.port = port
+        self.host = str(host)
+        self.port = int(port)
         self.password = password
         self.setDaemon(True)
 
@@ -228,13 +253,21 @@ class BattleEyeRcon(threading.Thread):
         while self._active:
             try:
                 raw_data = self.recieve_data()
-                response = self._decode_data(raw_data)
-
+                
             except socket.timeout as e:
                 continue
-
+            
             except Exception as e:
-                raise BattleEyeRconException('error during recieving')
+                raise BattleEyeRconException('error during recieving ({}, raw: {})'.format(e, raw_data))
+            
+            try:
+                response = self._decode_data(raw_data)
+        
+            except Exception as e:
+                #raise BattleEyeRconException('error during decoding ({})'.format(e))
+                continue
+
+            
               
             if response.get('message_type') == 0:
                 if self._authenticated == None:
@@ -275,7 +308,6 @@ class BattleEyeRcon(threading.Thread):
 
     def _callback_authentication_failed(self, *_):
         self._authenticated = False
-        raise BattleEyeRconException('login failed')
 
     def _callback_data_recieved(self, data):
         regex_chat = '\((.*)\) (.*): (.*)'
@@ -323,6 +355,14 @@ class BattleEyeRcon(threading.Thread):
                         
                     return self._trigger_callback('event', event_type, players)
                     
+                #elif event_type == 'be_kick':
+                #    event_data = re.search(event.get('regex'), data).groups()
+                #    return self._trigger_callback('event', event_type, {
+                #        'player': self.guid_to_player(event_type[0]),
+                #        'method': event_type[1],
+                #        'reason': event_type[2]
+                #    })
+                    
                 else:
                     try:
                         event_data = re.search(event.get('regex'), data).groups()
@@ -339,4 +379,5 @@ class BattleEyeRcon(threading.Thread):
             self._trigger_callback('event', 'player_chat', chat_data)
             
         except Exception as e:
-            print 'unknown data: {}'.format(data)
+            #if 'RCon admin #' not in data:
+            print 'unknown data: {} ({})'.format(data, e)
