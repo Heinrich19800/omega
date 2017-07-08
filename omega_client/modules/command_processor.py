@@ -5,6 +5,14 @@ MODULE_NAME = 'ChatCommands'
 MODULE_AUTHOR = 'philippj'
 MODULE_CONFIG_ID = 'official_chatcommands'
 
+PERMISSION_LEVEL_VALUES = {
+    'player': 0,
+    'support': 1,
+    'moderator': 2,
+    'admin': 3,
+    'cftools_staff': 4
+}
+
 DEFAULT_CONFIG = {
     'command_prefix': '!',
     'commands': {
@@ -14,14 +22,25 @@ DEFAULT_CONFIG = {
             'action_params': {
                 'message': 'test command executed successfully',
                 'target': 'player'
-            }
+            },
+            'required_permission_level': 'player'
+        },
+        'cftools': {
+            'command': 'test',
+            'action': 'send_formatted_message',
+            'action_params': {
+                'message': 'CFTools staff member {NAME} is online!',
+                'target': 'all'
+            },
+            'required_permission_level': 'cftools_staff'
         },
         'kick': {
             'command': 'kick',
             'action': 'kick_player',
             'action_params': {
                 'default_reason': 'Admin Kick'
-            }
+            },
+            'required_permission_level': 'support'
         }
     }
 }
@@ -50,12 +69,12 @@ class ChatCommands(object):
             message = message.split()
             command = message[0].replace(self.config.get('command_prefix'), '')
             params = message[1:]
-            command = self.validate_command(command)
-            if command:
-                return self._process_command(player, command, params)
+            command_data = self.validate_command(command)
+            if command_data:
+                return self._process_command(player, command_data, params)
             
             else:
-                return player.say('Unknown command "{}"', command)
+                return player.say('Unknown command "{}"'.format(command))
                 
         else: #implement cloud based chatlogs
             pass
@@ -77,6 +96,11 @@ class ChatCommands(object):
         return message
         
     def _process_command(self, player, command, params):
+        player_level = PERMISSION_LEVEL_VALUES.get(player.permission_level)
+        command_level = PERMISSION_LEVEL_VALUES.get(command.get('required_permission_level'))
+        if player_level < command_level:
+            return player.say('Unauthorized! You need to be a member of the permission group "{}" or higher to use this command'.format(command.get('required_permission_level')))
+            
         if command.get('action') == 'send_basic_message':
             message = command.get('action_params').get('message')
             if command.get('action_params').get('target') == 'player':
@@ -88,8 +112,12 @@ class ChatCommands(object):
         elif command.get('action') == 'send_formatted_message':
             message = command.get('action_params').get('message')
             message = self._replace_variables(message, player)
-            player.say(message)
+            if command.get('action_params').get('target') == 'player':
+                player.say(message)
                 
+            elif command.get('action_params').get('target') == 'all':
+                self._worker._rcon.say_all(message) 
+
         elif command.get('action') == 'kick_player':
             if len(params) > 0:
                 player_name = params[0]

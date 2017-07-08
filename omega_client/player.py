@@ -71,7 +71,7 @@ class OmegaPlayer(object):
             'discord_id': '',
             'twitch_id': '',
             'origin_client': self._worker._client.client_id,
-            'bans': [],
+            #'bans': [], #deprecated
             'globalban': {
                 'status': False,
                 'enforceable': True,
@@ -80,7 +80,7 @@ class OmegaPlayer(object):
                 'authorized_by': 'Omega Administrator'
             },
             'reports': [],
-            'admin_rights': [],
+            #'admin_rights': [], #deprecated
             'online': True,
             'active_server': self._worker.server_id
         }
@@ -98,7 +98,37 @@ class OmegaPlayer(object):
         else:
             self.player_data = response.get('data').get('player')
             self.omega_id = self.player_data.get('omega_id')
-        
+            
+        if self.omega_id:
+            additional_data = self._worker._client.request('server', self._worker.server_id, 'player', {
+                'omega_id': self.omega_id
+            })
+            self.permission_level = additional_data.get('admin_state').get('level') if additional_data.get('admin_state') else 'player'
+            self.whitelisted = additional_data.get('whitelist_state') if additional_data.get('whitelist_state') else False
+            if self.whitelisted:
+                if self.whitelisted.get('expires') != -1:
+                    if time() > self.whitelisted.get('expires'):
+                        self.whitelisted = False
+            
+            self.banned = additional_data.get('banned_state') if additional_data.get('banned_state') else False
+            if self.banned:
+                if self.banned.get('expires') != -1:
+                    if time() > self.banned.get('expires'):
+                        self.whitelisted = False
+                        
+            if self._worker.config.get('whitelist_enabled') and not self.whitelisted:
+                self.kick('You are not listed on this servers whitelist')
+                
+            if self.banned:
+                self.kick('You are banned from this server! ({})'.format(self.banned.get('reason')))
+                
+            if self.player_data.get('globalban').get('status'):
+                if self._worker.config.get('accept_globalbans'):
+                    self.kick('CFTools Globalban ({})'.format(self.player_data.get('globalban').get('reason')))
+                    
+                elif self.player_data.get('globalban').get('enforceable'):
+                    self.kick('[ENFORCED] CFTools Globalban ({})'.format(self.player_data.get('globalban').get('reason')))
+                    
     def kick(self, reason='You have been kicked from the server'):
         self._kicked = True
         self._kicked_reason = reason
