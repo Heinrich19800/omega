@@ -6,6 +6,7 @@ MODULE_AUTHOR = 'philippj'
 MODULE_CONFIG_ID = 'official_pingcheck'
 
 DEFAULT_CONFIG = {
+    'active': True,
     'max_warnings': 10,
     'warning_threshold_timeout': 10,
     'max_ping': 250,
@@ -14,18 +15,18 @@ DEFAULT_CONFIG = {
 }
 
 class PingCheck(object):
-    config = DEFAULT_CONFIG
-    _worker = None
-    
-    players = {}
-    
     def __init__(self, worker):
+        self.config = DEFAULT_CONFIG
+        self.players = {}
         self._worker = worker
         
         config = self._worker.get_module_config(MODULE_CONFIG_ID)
         if config:
             self.config = config
-            
+        
+        if not self.config.get('active'):
+            return
+        
         self._register_callbacks()
         
     def _register_callbacks(self):

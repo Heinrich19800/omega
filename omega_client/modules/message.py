@@ -6,6 +6,7 @@ MODULE_AUTHOR = 'philippj'
 MODULE_CONFIG_ID = 'official_messenger'
 
 DEFAULT_CONFIG = {
+    'active': True,
     'welcome_message': {
             'message': 'Welcome {NAME}. You are connecting from {COUNTRY}',
             'delay': 2,
@@ -20,21 +21,23 @@ DEFAULT_CONFIG = {
 }
 
 class Messenger(threading.Thread):
-    config = DEFAULT_CONFIG
-    _worker = None
-    
-    _scheduled_messages = []
-    
     def __init__(self, worker):
         threading.Thread.__init__(self)
+        
+        self.config = DEFAULT_CONFIG
+        self._scheduled_messages = []
+        
         self._worker = worker
         self.setDaemon(True)
-        self.start()
-        
         
         config = self._worker.get_module_config(MODULE_CONFIG_ID)
         if config:
             self.config = config
+            
+        if not self.config.get('active'):
+            return
+        
+        self.start()
             
         for message in self.config.get('scheduled_messages'):
             self._scheduled_messages.append({
@@ -50,7 +53,12 @@ class Messenger(threading.Thread):
         self._worker.register_callback('player', 'guid', self.player_computed)
         
     def _replace_variables(self, message, player):
-        message = message.replace('{NAME}', player.name)
+        try:
+            message = message.replace('{NAME}', player.name)
+            
+        except:
+            message = message.replace('{NAME}', player.fix_name(player.name)) 
+            
         message = message.replace('{IP}',   player.ip)
         message = message.replace('{GUID}', player.guid)
         message = message.replace('{SLOT}', player.slot)

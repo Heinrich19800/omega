@@ -3,6 +3,7 @@ import socket
 import time
 import threading
 import json
+import urllib2
 
 from cexceptions import *
 from worker import OmegaWorker
@@ -11,8 +12,11 @@ from worker import OmegaWorker
 LOCAL_CONFIG_PATH = '/var/omega-config/'
 
 """
-
-Will be finished on release of the DayZ SA server files
+TODO:
+- polling in client?
+- move api stuff to another file/class
+- better error handling for failed master requests
+- load avg., cpu usage, mem usage monitoring for dynamic loadbalancing
 """
 
 class OmegaClient(object):
@@ -25,15 +29,17 @@ class OmegaClient(object):
     
     status = {}
     
-    def __init__(self, client_id, host='cfbackend.de', protocol='https', serverlist=[]):
+    def __init__(self, client_id, host='cfbackend.de', protocol='https', serverlist=[], steam_api_key = ''):
         self.host = host
         self.protocol = protocol
+        self.steam_api_key = steam_api_key
         
         self.client_id = client_id
         self.register()
         self.retrieve_service_status()
         if not serverlist:
             self.retrieve_assigned_servers()
+        #TODO: implement back independent mode
         #else:
         #    self.verify_serverlist(serverlist)
         
@@ -54,7 +60,7 @@ class OmegaClient(object):
                     action
                 )
                 
-    def request(self, endpoint, val, action, payload = {}, special=''):
+    def request(self, endpoint, val, action, payload = {}, special='', timeout=60):
         try:
             response = requests.post(
                 self._build_url(endpoint, val, action, special),
@@ -62,8 +68,10 @@ class OmegaClient(object):
                     'Authorization': 'Bearer {}'.format(self.access_token), 
                     'client_id': self.client_id
                 },
-                json=payload
-                ).json()
+                json=payload,
+                timeout=timeout
+                )
+            response = response.json()
         
         except requests.exceptions.ConnectionError as e:
             #TODO: further error handling needed
@@ -71,6 +79,9 @@ class OmegaClient(object):
             # - loop till connection established?
             # - block requests till connection reestablished?
             raise Exception('Cant connect to licensing server') 
+            
+        except ValueError as e:
+            raise Exception('JSON error: {}'.format(response))
         
         if not response.get('success') and response.get('error_message') == 'expired token':
             self.register()
@@ -129,6 +140,7 @@ class OmegaClient(object):
             self.servers[server] = threading.Thread(target=OmegaWorker, name="workerthread-{}".format(server), args=(server, self,))
             self.servers[server].setDaemon(True)
             self.servers[server].start()
+
 		    
     def retrieve_config(self, server_id):
         response = self.request('server', server_id, 'config')
@@ -142,20 +154,39 @@ class OmegaClient(object):
     def _worker_reinitiate(self, server_id, reason=''):
         if server_id not in self.servers:
             return
-        
-        print '[WorkerThread-{}] Reinitiate due to: {}'.format(server_id, reason)
     
         del self.servers[server_id]
+
         self.servers[server_id] = threading.Thread(target=OmegaWorker, name="workerthread-{}".format(server_id), args=(server_id, self,))
         self.servers[server_id].setDaemon(True)
         self.servers[server_id].start()
         
-    def _server_offline(self, server_id):
-        self.request('server', server_id, 'state', {'state': 0})
+    def _worker_kill(self, server_id, reason=''):
+        if server_id not in self.servers:
+            return
+        
+        print '[WorkerThread-{}] Killed due to: {}'.format(server_id, reason)
+    
+        del self.servers[server_id]
+        
+    def _server_offline(self, server_id, reason):
+        self.request('server', server_id, 'state', {'state': 0, 'reason': reason})
     
     def _server_online(self, server_id):
         self.request('server', server_id, 'state', {'state': 2})
     
     def _server_started(self, server_id):
         self.request('server', server_id, 'state', {'state': 1})
+        
+    def steam_profile_request(self, steamid):
+        if not self.steam_api_key:
+            return {}
+            
+        options = {
+            'key': self.steam_api_key,
+            'steamids': steamid
+        }
+        url = 'http://api.steampowered.com/ISteamUser/GetPlayerSummaries/v0001/?key={}&steamids={}'.format(options.get('key'), options.get('steamids'))
+        rv = json.load(urllib2.urlopen(url))
+        return rv['response']['players']['player'][0] or {}
     

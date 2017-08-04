@@ -7,6 +7,7 @@ MODULE_CONFIG_ID = 'official_chatcommands'
 
 PERMISSION_LEVEL_VALUES = {
     'player': 0,
+    'vip': 1, #TODO: VIP state still relevant?
     'support': 1,
     'moderator': 2,
     'admin': 3,
@@ -16,16 +17,7 @@ PERMISSION_LEVEL_VALUES = {
 DEFAULT_CONFIG = {
     'command_prefix': '!',
     'commands': {
-        'test': {
-            'command': 'test',
-            'action': 'send_basic_message',
-            'action_params': {
-                'message': 'test command executed successfully',
-                'target': 'player'
-            },
-            'required_permission_level': 'player'
-        },
-        'cftools': {
+        'cftools': { #TODO: remove when finished
             'command': 'test',
             'action': 'send_formatted_message',
             'action_params': {
@@ -46,10 +38,8 @@ DEFAULT_CONFIG = {
 }
 
 class ChatCommands(object):
-    config = DEFAULT_CONFIG
-    _worker = None
-    
     def __init__(self, worker):
+        self.config = DEFAULT_CONFIG
         self._worker = worker
         
         config = self._worker.get_module_config(MODULE_CONFIG_ID)
@@ -76,9 +66,8 @@ class ChatCommands(object):
             else:
                 return player.say('Unknown command "{}"'.format(command))
                 
-        else: #implement cloud based chatlogs
+        else: #TODO: cloud chatlogs
             pass
-            #logging moved to console_logging module
             
     def validate_command(self, command):
         for cmd, data in self.config.get('commands').iteritems():
@@ -140,9 +129,5 @@ class ChatCommands(object):
             else:
                 player.say('!{} Syntax: !{} [name] (reason)'.format(command.get('command'), command.get('command')))
             
-            
-        #message = '{} issued {} with params {}'.format(player.name, command, params)
-        #player.say(message)
-    
 def hook():
     return [MODULE_NAME, MODULE_AUTHOR, ChatCommands]

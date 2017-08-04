@@ -1,8 +1,7 @@
 import requests
 import json
 
-API_PROVIDER    = 'http://freegeoip.net'
-ENDPOINT        = '/json/'
+API    = 'http://freegeoip.net/json/'
 
 DEBUG_LOCATION_DATA = {
     'city': '', 
@@ -19,14 +18,12 @@ DEBUG_LOCATION_DATA = {
 }
 
 class OmegaLocation(object):
-    ip = ''
-    
-    error = False
-    error_message = ''
-    
-    _location_data = { }
-    
     def __init__(self, ip):
+        self.error = False
+        self.error_message = ''
+        
+        self._location_data = { }
+        
         self.ip = ip
         self._fetch_data()
         
@@ -36,7 +33,7 @@ class OmegaLocation(object):
         return self._location_data.get(key)
         
     def _fetch_data(self):
-        uri = '{}{}{}'.format(API_PROVIDER, ENDPOINT, self.ip)
+        uri = '{}{}'.format(API, self.ip)
         try:
             response = requests.get(uri)
             self._location_data = response.json()

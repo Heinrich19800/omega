@@ -5,51 +5,10 @@ import binascii
 import time
 import re
 
-"""
-
-Will be finished on release of the DayZ SA server files
-"""
-
 class BattleEyeRconException(Exception):
     pass
 
 class BattleEyeRcon(threading.Thread):
-    _sequence = 0
-    _socket = None
-    _buffer_size = 1024
-    _keepalive_interval = 30
-    _authenticated = None
-    
-    host = ''
-    port = 0
-    password = ''
-    
-    _callbacks = {
-       'connection': {
-            'lost': [],
-            'established': [],
-            'authenticated': [],
-            'authentication_failed': [],
-            'keepalive_acknowledged': []
-       },
-       'data': {
-            'recieved': [],
-            'sent': []
-       },
-       'event': {
-            'player_guid': [],
-            'player_unverified_guid': [],
-            'player_connect': [],
-            'player_disconnect': [],
-            'player_list': [],
-            'be_kick': [],
-            'player_chat': [],
-            'rcon_message': [],
-            'rcon_admin_login': [],
-            'unable_to_recieve': []
-       }
-    }
-
     _regex = {
         'player_guid': {
             'regex': r'Verified GUID \((.*)\) of player #([0-9]+) (.*)',
@@ -57,15 +16,15 @@ class BattleEyeRcon(threading.Thread):
         },
         'player_unverified_guid': {
             'regex': r'Player #([0-9]+) (.*) - GUID: (.*)',
-            'identification_string': ['Player', 'GUID']
-        },
-        'player_connect': {
-            'regex': r'Player #([0-9]+) (.*) \((.*):(.*)\) connected',
-            'identification_string': ['Player #', 'connected']
+            'identification_string': ['Player #', 'GUID:']
         },
         'player_disconnect': {
             'regex': r'Player #([0-9]+) (.*) disconnected',
             'identification_string': ['Player #', 'disconnected']
+        },
+        'player_connect': {
+            'regex': r'Player #([0-9]+) (.*) \((.*):(.*)\) connected',
+            'identification_string': ['Player #', ') connected']
         },
         'player_list': {
             'regex': r'(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)',
@@ -86,19 +45,66 @@ class BattleEyeRcon(threading.Thread):
         'unable_to_recieve': {
             'regex': r'(.*)',
             'identification_string': ['Player is unable to receive the message']
+        },
+        'connected_be_master': {
+            'regex': r'(.*)',
+            'identification_string': ['Connected to BE Master']
         }
     }
 
     def __init__(self, host, port, password):
         threading.Thread.__init__(self)
         
+        self._sequence = 0
+        self._socket = None
+        self._buffer_size = 1024*2
+        self._keepalive_interval = 10
+        self._authenticated = None
+
+        self._callbacks = {
+           'connection': {
+                'lost': [],
+                'established': [],
+                'authenticated': [],
+                'authentication_failed': [],
+                'keepalive_acknowledged': []
+           },
+           'data': {
+                'recieved': [],
+                'sent': []
+           },
+           'event': {
+                'player_guid': [],
+                'player_unverified_guid': [],
+                'player_connect': [],
+                'player_disconnect': [],
+                'player_list': [],
+                'be_kick': [],
+                'player_chat': [],
+                'rcon_message': [],
+                'rcon_admin_login': [],
+                'unable_to_recieve': [],
+                'connected_be_master': []
+           },
+           'error': {
+               'critical': [],
+               'connection_refused': [],
+               'connection_closed': []
+           }
+        }
+        
+        self.alive = True
+        
         self.host = str(host)
         self.port = int(port)
         self.password = password
         self.setDaemon(True)
+        
+        
 
         self.register_callback('connection', 'authenticated', self._callback_authenticated)
         self.register_callback('connection', 'authentication_failed', self._callback_authentication_failed)
+        self.register_callback('connection', 'keepalive_acknowledged', self._callback_keepalive_acknowledged)
         self.register_callback('data', 'recieved', self._callback_data_recieved)
 
     def shutdown_server(self):
@@ -229,7 +235,8 @@ class BattleEyeRcon(threading.Thread):
         response = {
             'message_type': -1, 
             'sequence': -1, 
-            'data': ''
+            'data': '',
+            'multipacket': 0
         }
 	    
         if data[0:2] != b'BE':
@@ -238,37 +245,60 @@ class BattleEyeRcon(threading.Thread):
         else:
             message = self.build_message(data[8:9], 'acknowledge')
             self._socket.send(message)
-
+        
         response['message_type'] = ord(data[7:8])
         response['sequence'] = ord(data[8:9])
         response['data'] = data[9:]
-        return response
         
+        return response
+    
     def run(self):
         self._active = True
-        self._keepalive_thread = threading.Thread(target=self.keepalive_thread, name="keepalive")
-        self._keepalive_thread.setDaemon(True)
-
-        
+        multipacket = {
+            'count': 0,
+            'current': 0,
+            'data': ''
+        }
         while self._active:
             try:
                 raw_data = self.recieve_data()
-                
+                if len(raw_data) == 0:
+                    raise Exception('connection closed?')
+                    
             except socket.timeout as e:
                 continue
             
+            except socket.error as e:
+                if e.errno == 111:
+                    self.stop()
+                    return self._trigger_callback('error', 'connection_refused')
+
             except Exception as e:
-                raise BattleEyeRconException('error during recieving ({}, raw: {})'.format(e, raw_data))
-            
+                try:
+                    raise BattleEyeRconException('error during recieving ({}, raw: {})'.format(e, raw_data))
+                    
+                except UnboundLocalError as another_e:
+                    self.stop()
+                    return self._trigger_callback('error', 'critical')
+    
             try:
                 response = self._decode_data(raw_data)
-        
-            except Exception as e:
-                #raise BattleEyeRconException('error during decoding ({})'.format(e))
-                continue
 
+                if len(response.get('data')) > 0 and response.get('data')[0] == '\x00':
+                    multipacket['count'] = int(ord(response.get('data')[1]))
+                    multipacket['current'] = int(ord(response.get('data')[2]))+1
+                    multipacket['data'] += response.get('data')[3:]
+                    
+                    if multipacket['count'] != multipacket['current']:
+                        continue
+                    
+                    else:
+                        response['data'] = multipacket['data']
+                        multipacket['data'] = ''
+
+            except Exception as e:
+                continue
             
-              
             if response.get('message_type') == 0:
                 if self._authenticated == None:
                     if response.get('sequence') == 1:
@@ -277,12 +307,7 @@ class BattleEyeRcon(threading.Thread):
                     else:
                         self._trigger_callback('connection', 'authentication_failed')
                         
-                else:
-                    #multipacket, number of packets = sequence
-                    print response
-                    
             elif response.get('message_type') == 1:
-                #command response
                 if response.get('sequence') == 0 and not response.get('data'):
                     self._trigger_callback('connection', 'keepalive_acknowledged')
 
@@ -294,14 +319,27 @@ class BattleEyeRcon(threading.Thread):
 
             else:
                 print response
+                
+        self.stop()
 	                
     def keepalive_thread(self):
         while self._active:
-            message = self.build_message('', 'cmd', True)
-            self._socket.send(message)
-            time.sleep(self._keepalive_interval)
+            if not self.alive:
+                self.stop()
+                return self._trigger_callback('error', 'connection_closed')
+                
+            else:
+                self.alive = False
+                message = self.build_message('', 'cmd', True)
+                self._socket.send(message)
+                time.sleep(self._keepalive_interval)
+
+    def _callback_keepalive_acknowledged(self, *_):
+        self.alive = True 
 
     def _callback_authenticated(self, *_):
+        self._keepalive_thread = threading.Thread(target=self.keepalive_thread, name="keepalive-{}:{}".format(self.host, self.port))
+        self._keepalive_thread.setDaemon(True)
         self._keepalive_thread.start()
         self._authenticated = True
         self.command('players')
@@ -310,16 +348,16 @@ class BattleEyeRcon(threading.Thread):
         self._authenticated = False
 
     def _callback_data_recieved(self, data):
-        regex_chat = '\((.*)\) (.*): (.*)'
-        regex_lobby = '(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)'
-        regex_ingame = '(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)'
+        regex_chat = r'\((.*)\) (.*): (.*)'
+        regex_lobby = r'(\d+)\s+(.*?)\s(.*?)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)'
+        regex_ingame = r'(\d+)\s+(.*?)\s(.*?)\s+([A-z0-9]{32})\(.*?\)\s(.*)'
         for event_type, event in self._regex.iteritems():
             valid = True
             for identification_string in event.get('identification_string'):
                 if identification_string not in data:
                     valid = False
                     break
-
+            
             if not valid:
                 continue
 
@@ -341,43 +379,36 @@ class BattleEyeRcon(threading.Thread):
                                 lobby = False
                                 
                             except Exception as e:
-                                #probably not fully connected <.<
+                                #probably not fully connected
                                 continue
                             
-                        players.append({
-                            'slot': player_data[0],
-                            'ip': player_data[1].split(':')[0],
-                            'ping': int(player_data[2]),
-                            'guid': player_data[3],
-                            'name': player_data[4],
-                            'lobby': lobby
-                        })
+                        try:
+                            players.append({
+                                'slot': player_data[0],
+                                'ip': player_data[1].split(':')[0],
+                                'ping': int(player_data[2]),
+                                'guid': player_data[3],
+                                'name': player_data[4],
+                                'lobby': lobby
+                            })
+                        except:
+                            #probably not fully connected
+                            continue
                         
                     return self._trigger_callback('event', event_type, players)
-                    
-                #elif event_type == 'be_kick':
-                #    event_data = re.search(event.get('regex'), data).groups()
-                #    return self._trigger_callback('event', event_type, {
-                #        'player': self.guid_to_player(event_type[0]),
-                #        'method': event_type[1],
-                #        'reason': event_type[2]
-                #    })
                     
                 else:
                     try:
                         event_data = re.search(event.get('regex'), data).groups()
-                        self._trigger_callback('event', event_type, event_data)
+ 
+                        return self._trigger_callback('event', event_type, event_data)
                         
                     except Exception as e:
-                        pass
-                    
-                    else:
                         return
                     
         try:
             chat_data = re.search(regex_chat, data).groups()
-            self._trigger_callback('event', 'player_chat', chat_data)
+            return self._trigger_callback('event', 'player_chat', chat_data)
             
         except Exception as e:
-            #if 'RCon admin #' not in data:
             print 'unknown data: {} ({})'.format(data, e)
