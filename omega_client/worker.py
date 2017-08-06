@@ -341,10 +341,6 @@ class OmegaWorker(threading.Thread):
     #NOTICE: unused
     def _polling(self):
         while self._active:
-            if not self._ready:
-                time.sleep(5)
-                continue
-            
             response = self._client.request('server', self.server_id, 'poll', timeout=65)
 
             if response.get('success'):

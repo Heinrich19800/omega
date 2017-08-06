@@ -180,9 +180,6 @@ class OmegaClient(object):
         if server_id not in self.servers:
             return
     
-        if self.servers[server_id].get('stopped'):
-            self._worker_kill(server_id, 'stopped')
-    
         del self.servers[server_id]
 
         self.servers[server_id] = threading.Thread(target=OmegaWorker, name="workerthread-{}".format(server_id), args=(server_id, self,))
