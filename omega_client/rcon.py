@@ -404,7 +404,9 @@ class BattleEyeRcon(threading.Thread):
                         return self._trigger_callback('event', event_type, event_data)
                         
                     except Exception as e:
-                        return
+                        print event_type
+                        print e
+                        continue
                     
         try:
             chat_data = re.search(regex_chat, data).groups()

@@ -319,8 +319,8 @@ class OmegaWorker(threading.Thread):
         self._start_rcon()
         
         #TODO: find nicer way to poll
-        #_polling_thread = threading.Thread(target=self._polling)
-        #_polling_thread.start()
+        _polling_thread = threading.Thread(target=self._polling)
+        _polling_thread.start()
         while self._active:
             time.sleep(1)
             if int(time.time()) - self._fetches.get('config') > CONFIG_FETCH_INTERVAL:
@@ -341,16 +341,12 @@ class OmegaWorker(threading.Thread):
     #NOTICE: unused
     def _polling(self):
         while self._active:
-            if not self._running:
+            if not self._ready:
                 time.sleep(5)
                 continue
             
-            try:
-                response = self._client.request('server', self.server_id, 'poll', timeout=60)
-                
-            except Exception as e:
-                continue
-            
+            response = self._client.request('server', self.server_id, 'poll', timeout=65)
+
             if response.get('success'):
                 orders = response.get('data').get('orders')
                 for order in orders:
@@ -364,6 +360,11 @@ class OmegaWorker(threading.Thread):
                 
         elif action == 'global_message':
             self._rcon.say_all(params.get('message'))
+            
+        elif action == 'stop':
+            self._rcon.say_all('CFTools instance stopped.')
+            self.stop(reason=params.get('reason'))
+            self._client._worker_kill(self.server_id, params.get('reason'))
             
     """
     TODO: rewrite stopping/reinitiating

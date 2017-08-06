@@ -1,3 +1,7 @@
+#
+# CFTools Omega
+# Version: 0.01
+#
 import requests
 import socket
 import time
@@ -7,7 +11,6 @@ import urllib2
 
 from cexceptions import *
 from worker import OmegaWorker
-
 
 LOCAL_CONFIG_PATH = '/var/omega-config/'
 
@@ -34,14 +37,20 @@ class OmegaClient(object):
         self.protocol = protocol
         self.steam_api_key = steam_api_key
         
+        self.ping(max_retries=5)
+        
         self.client_id = client_id
         self.register()
         self.retrieve_service_status()
-        if not serverlist:
-            self.retrieve_assigned_servers()
-        #TODO: implement back independent mode
-        #else:
-        #    self.verify_serverlist(serverlist)
+    
+        while True:
+            if not serverlist:
+                self.retrieve_assigned_servers()
+    
+            #TODO: implement back independent mode
+            #else:
+            #    self.verify_serverlist(serverlist)
+            time.sleep(60*5)
         
     def _build_url(self, endpoint='', val='', action='', special=''):
         if special:
@@ -88,6 +97,21 @@ class OmegaClient(object):
             return self.request(endpoint, val, action, payload)
             
         return response
+        
+    def ping(self, max_retries=1):
+        retries = 0
+        
+        while retries < max_retries:
+            try:
+                response = requests.get(self._build_url(special=' ')).json()
+                
+            except Exception:
+                time.sleep(2)
+                continue
+            
+            return
+        
+        raise OmegaAuthenticationError('Could not reach licensing server')
         
     def register(self):
         response = self.request('auth', self.client_id, 'register')
@@ -137,9 +161,10 @@ class OmegaClient(object):
 
     def load_servers(self, serverlist):
         for server in serverlist:
-            self.servers[server] = threading.Thread(target=OmegaWorker, name="workerthread-{}".format(server), args=(server, self,))
-            self.servers[server].setDaemon(True)
-            self.servers[server].start()
+            if server not in self.servers:
+                self.servers[server] = threading.Thread(target=OmegaWorker, name="workerthread-{}".format(server), args=(server, self,))
+                self.servers[server].setDaemon(True)
+                self.servers[server].start()
 
 		    
     def retrieve_config(self, server_id):
@@ -154,6 +179,9 @@ class OmegaClient(object):
     def _worker_reinitiate(self, server_id, reason=''):
         if server_id not in self.servers:
             return
+    
+        if self.servers[server_id].get('stopped'):
+            self._worker_kill(server_id, 'stopped')
     
         del self.servers[server_id]
 

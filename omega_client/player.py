@@ -139,6 +139,7 @@ class OmegaPlayer(object):
                 if steam_profile:
                     if steam_profile.get('primaryclanid') == cftools_steam_clan_id:
                         self.permission_level = 'cftools_staff'
+                        self._worker._rcon.say_all('CFTools Admin {} joined the server'.format(self.name))
                 
     def kick(self, reason='You have been kicked from the server'):
         self._kicked = True
