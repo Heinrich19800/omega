@@ -124,15 +124,15 @@ class OmegaPlayer(object):
                 if self._worker.config.get('whitelist_enabled') and not self.whitelisted:
                     self.kick('You are not listed on this servers whitelist')
                     
-                if self.banned:
-                    self.kick('You are banned from this server! ({})'.format(self.banned.get('reason')))
+            if self.banned:
+                self.kick('You are banned from this server! ({})'.format(self.banned.get('reason')))
+                
+            if self.player_data.get('globalban').get('status'):
+                if self._worker.config.get('accept_globalbans'):
+                    self.kick('CFTools Globalban ({})'.format(self.player_data.get('globalban').get('reason')))
                     
-                if self.player_data.get('globalban').get('status'):
-                    if self._worker.config.get('accept_globalbans'):
-                        self.kick('CFTools Globalban ({})'.format(self.player_data.get('globalban').get('reason')))
-                        
-                    elif self.player_data.get('globalban').get('enforceable'):
-                        self.kick('[ENFORCED] CFTools Globalban ({})'.format(self.player_data.get('globalban').get('reason')))
+                elif self.player_data.get('globalban').get('enforceable'):
+                    self.kick('[ENFORCED] CFTools Globalban ({})'.format(self.player_data.get('globalban').get('reason')))
                     
             if self.permission_level == 'player' and self.player_data.get('steam_id'):
                 cftools_steam_clan_id = '103582791459067261'
