@@ -65,6 +65,10 @@ class OmegaWorker(threading.Thread):
             }
         }
         
+        self.hive = 'public'
+        self.server_name = False
+        self.max_players = -1
+        
         self._modules = []
         
         try:
@@ -136,6 +140,16 @@ class OmegaWorker(threading.Thread):
                 raise OmegaWorkerError(self.server_id, '{} could not be found (no cloud config provided)'.format(path))
                 
         self.config = config
+        if 'steam_info' in config:
+            self.steam_info = config.get('steam_info')
+            
+            if self.steam_info:
+                if 'privHive' in self.steam_info.get('restricted').get('gametype'):
+                    self.hive = 'private'
+                    
+                self.server_name = self.steam_info.get('name')
+                self.max_players = self.steam_info.get('max_players')
+                
         
     def _initiate_rcon(self):
         self._rcon = BattleEyeRcon(self.config.get('host'), self.config.get('port'), self.config.get('password'))
