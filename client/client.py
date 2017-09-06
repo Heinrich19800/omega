@@ -71,9 +71,24 @@ class OmegaClient(threading.Thread):
             
     def _setup_server(self, server_id, server):
         self.servers[server_id] = server
-        
-        if not server.get('stopped'):
-            self.workers[server_id] = OmegaWorker(server_id, server, self)
+        if not server.get('config').get('stopped'):
+            self.start_worker(server_id)
+            
+    def _execute_orders(self, orders):
+        for order in orders:
+            server_id = order.get('server_id')
+            if order.get('action') == 'start':
+                self.servers[server_id]['config']['stopped'] = False
+                    
+                if not self.workers.get(server_id):
+                    self.start_worker(server_id)
+                    
+            elif order.get('action') == 'stop':
+                self.servers[server_id]['config']['stopped'] = True
+                
+                if self.workers.get(server_id):
+                    self.workers[server_id].server.stop()
+                    self.kill_worker(server_id, 'web_shutdown')
 
     def run(self):
         while True:
@@ -85,6 +100,7 @@ class OmegaClient(threading.Thread):
 
             if response.get('success'):
                 orders = response.get('data').get('orders')
+                self._execute_orders(orders)
                 
         self.api.client_stop(self.client_id)    
         
@@ -94,9 +110,12 @@ class OmegaClient(threading.Thread):
         
         self.workers[server_id].stop(reason)
         del self.workers[server_id]
-        del self.servers[server_id]
+        #del self.servers[server_id]
         
     def restart_worker(self, server_id):
         config = self.servers.get(server_id)
         self.kill_worker(server_id)
         self._setup_server(server_id, config)
+        
+    def start_worker(self, server_id):
+        self.workers[server_id] = OmegaWorker(server_id, self.servers[server_id], self)
