@@ -76,20 +76,46 @@ class OmegaClient(threading.Thread):
             
     def _execute_orders(self, orders):
         for order in orders:
-            server_id = order.get('server_id')
             if order.get('action') == 'start':
+                server_id = order.get('server_id')
                 self.servers[server_id]['config']['stopped'] = False
                     
                 if not self.workers.get(server_id):
                     self.start_worker(server_id)
                     
             elif order.get('action') == 'stop':
+                server_id = order.get('server_id')
                 self.servers[server_id]['config']['stopped'] = True
                 
                 if self.workers.get(server_id):
                     self.workers[server_id].server.stop()
                     self.kill_worker(server_id, 'web_shutdown')
-
+                    
+            elif order.get('action') == 'say_player':
+                server_id = order.get('server_id')
+                player = self.workers[server_id].get_player_by_omega_id(order.get('omega_id'))
+                player.say(order.get('message'))
+                
+            elif order.get('action') == 'kick_player':
+                server_id = order.get('server_id')
+                player = self.workers[server_id].get_player_by_omega_id(order.get('omega_id'))
+                player.kick(order.get('message'))
+                
+            elif order.get('action') == 'say_all':
+                server_id = order.get('server_id')
+                self.workers[server_id].server.say_all(order.get('message'))
+                
+            elif order.get('action') == 'cftoolsbroadcast':
+                for server_id in self.workers:
+                    message = '[CFTools Broadcast] {}'.format(order.get('message'))
+                    self.workers[server_id].server.say_all(message)
+                    
+            elif order.get('action') == 'module':
+                server_id = order.get('server_id')
+                self.servers[server_id]['config']['modules'][order.get('module')] = order.get('config')
+                self.workers[server_id].config['modules'][order.get('module')] = order.get('config')
+                self.workers[server_id].trigger_callback('tool', 'module_update', order.get('module'))
+                
     def run(self):
         while True:
             try:
@@ -110,7 +136,6 @@ class OmegaClient(threading.Thread):
         
         self.workers[server_id].stop(reason)
         del self.workers[server_id]
-        #del self.servers[server_id]
         
     def restart_worker(self, server_id):
         config = self.servers.get(server_id)

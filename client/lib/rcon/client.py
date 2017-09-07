@@ -92,7 +92,7 @@ class BattleEyeRcon(threading.Thread, Callback):
             'connection_closed'
         ])
         
-        self.alive = True
+        self.alive = time.time()
         self.running = False
         
         self.host = str(host)
@@ -153,7 +153,7 @@ class BattleEyeRcon(threading.Thread, Callback):
         self.rcon.command('loadbans')
         
     def checkalive(self):
-        if not self.alive:
+        if time.time()-self.alive >= 30:
             self.stop()
             while self.running:
                 time.sleep(.05) #wait for thread to exit (50 ms)
@@ -161,7 +161,6 @@ class BattleEyeRcon(threading.Thread, Callback):
             return self.trigger_callback('error', 'connection_closed')
             
     def keepalive(self):
-        self.alive = False
         self.rcon.keepalive()
 
     def stop(self):
@@ -249,7 +248,7 @@ class BattleEyeRcon(threading.Thread, Callback):
         self.running = False
 	                
     def _callback_keepalive_acknowledged(self, *_):
-        self.alive = True 
+        self.alive = time.time() 
 
     def _callback_authenticated(self, *_):
         self._authenticated = True

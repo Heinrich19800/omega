@@ -148,8 +148,7 @@ class OmegaPlayer(object):
                 if steam_profile:
                     if steam_profile.get('primaryclanid') == CFTOOLS_STAFF_PERM_GROUP:
                         self.permission_level = 'cftools_staff'
-                        self.worker.server.say_all('CFTools Admin {} joined the server'.format(self.name))
-        
+
         else:
             self.permission_level = 'player'
                 

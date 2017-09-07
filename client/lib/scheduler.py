@@ -20,7 +20,7 @@ class Scheduler(threading.Thread):
     def add_task(self, function, execute_time, repeating=False, **params):
         task_id = str(self._id)
         self.queue[task_id] = {
-            "execute_time": execute_time,
+            "execute_time": time()+execute_time,
             "repeating": repeating,
             "function": function,
             "params": params

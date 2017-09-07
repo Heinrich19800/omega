@@ -46,7 +46,9 @@ class OmegaWorker(Callback):
             'started',
             'stopped',
             'halted',
-            'error'
+            'error',
+            'config_update',
+            'module_update'
         ])
         
         self.client.api.server_state(self.server_id, ServerStates.STARTING)
@@ -139,6 +141,14 @@ class OmegaWorker(Callback):
                 
         return results
         
+    def construct_message(self, message):
+        message = str(message)
+        message = message.replace('%SERVERNAME%', self.servername)
+        message = message.replace('%HIVE%', self.hive) 
+        message = message.replace('%MAXPLAYERS%', str(self.max_players))
+        message = message.replace('%PLAYERS%', str(len(self.players)))
+        return message
+        
     def setup_rcon(self):
         self.server = BattleEyeRcon(self.config.get('host'), self.config.get('port'), self.config.get('password'))
         self.server.register_callback('connection', 'authenticated', self._cb_rcon_authenticated)
@@ -165,6 +175,7 @@ class OmegaWorker(Callback):
         if self.playerlist_task_id != -1:
             self.scheduler.remove_task(self.playerlist_task_id)
             
+        self.client.api.server_state(self.server_id, ServerStates.STOPPED)
         self.trigger_callback('tool', 'stopped', reason)
         
     def _cb_rcon_authenticated(self, *_):

@@ -1,3 +1,4 @@
+from datetime import datetime
 from time import time
 
 MODULE_NAME = 'ConsoleLogging'
@@ -21,6 +22,8 @@ class ConsoleLogger(object):
         self.worker.register_callback('tool', 'offline', self.tool_offline)
         self.worker.register_callback('tool', 'halted', self.tool_halted)
         self.worker.register_callback('tool', 'error', self.tool_error)
+        self.worker.register_callback('tool', 'config_update', self.tool_config_update)
+        self.worker.register_callback('tool', 'module_update', self.tool_module_update)
         
     @property
     def _id(self):
@@ -29,40 +32,50 @@ class ConsoleLogger(object):
             
         else:
             return self.worker.server_id
+            
+    @property
+    def time(self):
+        return datetime.now().strftime('%H:%M:%S %d.%m.%Y')
         
     def player_connected(self, player):
-        print '{} - [+] ({}) player_connect | {} (Slot: {}) {}, IP: {} ({})'.format(self._id, time(), player.name, player.slot, player.guid, player.ip, player.country_name)
+        print '{} - [+] ({}) player_connect | {} (Slot: {}) {}, IP: {} ({})'.format(self._id, self.time, player.name, player.slot, player.guid, player.ip, player.country_name)
         
     def player_disconnected(self, player):
         if player.guid:
-            print '{} - [-] ({}) player_disconnect | {} {}'.format(self._id, time(), player.name, player.guid)
+            print '{} - [-] ({}) player_disconnect | {} {}'.format(self._id, self.time, player.name, player.guid)
         
         else:
-            print '{} - [-] ({}) player_disconnect | {} - Not fully connected'.format(self._id, time(), player.name)
+            print '{} - [-] ({}) player_disconnect | {} - Not fully connected'.format(self._id, self.time, player.name)
         
     def player_kicked(self, kick_data):
         player = kick_data.get('player')
-        print '{} - [!] ({}) player_kicked | {} {}, by: {}, for: {}'.format(self._id, time(), player.name, player.guid, kick_data.get('method'), kick_data.get('reason'))
+        print '{} - [!] ({}) player_kicked | {} {}, by: {}, for: {}'.format(self._id, self.time, player.name, player.guid, kick_data.get('method'), kick_data.get('reason'))
         
     def player_chat(self, chat_data):
         player = chat_data.get('player')
         message = chat_data.get('message_data')
-        print '{} - [*] ({}) player_chat | {} {}, to: {}, message: {}'.format(self._id, time(), player.name, player.guid, message.get('destination'), message.get('message'))
+        print '{} - [*] ({}) player_chat | {} {}, to: {}, message: {}'.format(self._id, self.time, player.name, player.guid, message.get('destination'), message.get('message'))
 
     def tool_started(self, *_):
-        print '\033[94m{} - [!!!] ({}) tool_started\033[0m'.format(self._id, time())
+        print '\033[94m{} - [!!!] ({}) tool_started\033[0m'.format(self._id, self.time)
         
     def tool_stopped(self, reason):
-        print '\033[91m{} - [!!!] ({}) tool_stopped | {}\033[0m'.format(self._id, time(), reason)
+        print '\033[91m{} - [!!!] ({}) tool_stopped | {}\033[0m'.format(self._id, self.time, reason)
         
     def tool_offline(self, *_):
-        print '\033[91m{} - [!!!] ({}) tool_offline\033[0m'.format(self._id, time())
+        print '\033[91m{} - [!!!] ({}) tool_offline\033[0m'.format(self._id, self.time)
     
     def tool_error(self, error):
-        print '\033[91m{} - [!!!] ({}) tool_error | {}\033[0m'.format(self._id, time(), error)
+        print '\033[91m{} - [!!!] ({}) tool_error | {}\033[0m'.format(self._id, self.time, error)
 
     def tool_halted(self, reason):
-        print '\033[91m{} - [!!!] ({}) tool_halted | {}\033[0m'.format(self._id, time(), reason)
+        print '\033[91m{} - [!!!] ({}) tool_halted | {}\033[0m'.format(self._id, self.time, reason)
+        
+    def tool_config_update(self, value):
+        print '\033[36m{} - [!!] ({}) tool_config_update | {} \033[0m'.format(self._id, self.time, value)
+        
+    def tool_module_update(self, module):
+        print '\033[36m{} - [!!] ({}) tool_module_update | {} \033[0m'.format(self._id, self.time, module)
 
 def hook():
     return [MODULE_NAME, MODULE_AUTHOR, ConsoleLogger]
