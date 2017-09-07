@@ -17,16 +17,24 @@ class PingCheck(object):
         self.players = {}
         self.worker = worker
 
+        self.fetch_config()
+
+        self.register_callbacks()
+        
+    def fetch_config(self):
         config = self.worker.get_module_config(MODULE_CONFIG_ID)
         if config:
             self.config = config
-
-        self.register_callbacks()
         
     def register_callbacks(self):
         self.worker.register_callback('player', 'guid', self.player_computed)
         self.worker.register_callback('player', 'disconnect', self.player_disconnected)
         self.worker.register_callback('player', 'ping_update', self.ping_updated)
+        self.worker.register_callback('tool', 'module_update', self.config_update)
+        
+    def config_update(self, module):
+        if module == MODULE_CONFIG_ID:
+            self.fetch_config()
         
     def player_computed(self, player):
         if player.guid not in self.players:

@@ -14,14 +14,22 @@ class VPNCheck(object):
 
         self.worker = worker
 
-        config = self.worker.get_module_config(MODULE_CONFIG_ID)
-        if config:
-            self.config = config
+        self.fetch_config()
 
         self.register_callbacks()
         
+    def fetch_config(self):
+        config = self.worker.get_module_config(MODULE_CONFIG_ID)
+        if config:
+            self.config = config
+        
     def register_callbacks(self):
         self.worker.register_callback('player', 'guid', self.player_computed)
+        self.worker.register_callback('tool', 'module_update', self.config_update)
+        
+    def config_update(self, module):
+        if module == MODULE_CONFIG_ID:
+            self.fetch_config()
         
     def player_computed(self, player):
         if not self.config.get('active'):
