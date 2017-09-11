@@ -4,7 +4,7 @@ import threading
 import importlib
 import time
 
-from lib.rcon.client import BattleEyeRcon
+from lib.rcon.server import DayZServer
 from lib.player import OmegaPlayer
 from lib.callback import Callback
 from lib.scheduler import Scheduler
@@ -16,16 +16,16 @@ script_path = script_path.replace('/lib', '')
 MODULE_DIR = '{}/modules'.format(script_path)
 sys.path.append(MODULE_DIR)
 
+DEFAULT_SERVERNAME = 'default servername'
+
 
 class OmegaWorker(Callback):
-    DEFAULT_SERVERNAME = 'default servername'
     def __init__(self, server_id, server_data, client):
-        
         self.server_id = server_id
         self.client = client
         
         self.hive = 'public'
-        self.servername = self.DEFAULT_SERVERNAME
+        self.servername = DEFAULT_SERVERNAME
         self.max_players = 1
         
         self._update(server_data)
@@ -55,9 +55,10 @@ class OmegaWorker(Callback):
         
         self.setup_rcon()
         self.scheduler = Scheduler()
-        self.keepalive_task_id = -1
-        self.checkalive_task_id = -1
-        self.playerlist_task_id = -1
+        self.tasks_created = False
+        self.checkalive_fails = 0
+        
+        self.start()
         
         self._modules = []
         self.load_modules()
@@ -69,7 +70,6 @@ class OmegaWorker(Callback):
         else:
             return self.config.get('modules').get(module_config_id)
     
-    #TODO: Rewrite modules to implement start/stop of worker
     def load_modules(self):
         module_files = []
         
@@ -150,7 +150,7 @@ class OmegaWorker(Callback):
         return message
         
     def setup_rcon(self):
-        self.server = BattleEyeRcon(self.config.get('host'), self.config.get('port'), self.config.get('password'))
+        self.server = DayZServer(self.config.get('host'), self.config.get('port'), self.config.get('password'))
         self.server.register_callback('connection', 'authenticated', self._cb_rcon_authenticated)
         self.server.register_callback('connection', 'authentication_failed', self._cb_rcon_authenticated_failed)
         self.server.register_callback('event', 'player_connect', self._cb_player_connected)
@@ -161,35 +161,62 @@ class OmegaWorker(Callback):
         self.server.register_callback('event', 'be_kick', self._cb_player_kick)
         self.server.register_callback('error', 'connection_refused', self._cb_error_connection_refused)
         self.server.register_callback('error', 'connection_closed', self._cb_error_connection_closed)
-        self.server.rcon.connect()
-        self.server.rcon.login()
+        self.server.register_callback('error', 'checkalive_failed', self._cb_error_checkalive_failed)
+    
+    def start(self):
         self.server.start()
-        
+    
+    def halt(self, reason='halted'):
+        self.scheduler.suspend()
+        self.server.stop()
+        self.client.api.server_state(self.server_id, ServerStates.STOPPED, reason)
+        self.trigger_callback('tool', 'halted', reason)
+        self.first_players_fetch = True
+        for slot in dict(self.players):
+            self.trigger_callback('player', 'disconnect', self.players[slot])
+            del self.players[slot]
+    
     def stop(self, reason='shutdown'):
-        if self.keepalive_task_id != -1:
-            self.scheduler.remove_task(self.keepalive_task_id)
-            
-        if self.checkalive_task_id != -1:
-            self.scheduler.remove_task(self.checkalive_task_id)
-            
-        if self.playerlist_task_id != -1:
-            self.scheduler.remove_task(self.playerlist_task_id)
-            
-        self.client.api.server_state(self.server_id, ServerStates.STOPPED)
+        self.scheduler.suspend()
+        self.server.stop()
+        self.client.api.server_state(self.server_id, ServerStates.STOPPED, reason)
         self.trigger_callback('tool', 'stopped', reason)
+        self.first_players_fetch = True
+        for slot in dict(self.players):
+            self.trigger_callback('player', 'disconnect', self.players[slot])
+            del self.players[slot]
         
     def _cb_rcon_authenticated(self, *_):
-        self.keepalive_task_id = self.scheduler.add_task(self.server.keepalive, 0, 15)
-        self.checkalive_task_id = self.scheduler.add_task(self.server.checkalive, 0, 30)
-        self.playerlist_task_id = self.scheduler.add_task(self.server.request_playerlist, 0, 15)
+        if not self.tasks_created:
+            self.scheduler.add_task(self.server.keepalive, 0, 15)
+            self.scheduler.add_task(self.server.checkalive, 0, 27)
+            self.scheduler.add_task(self.server.request_playerlist, 30, 15)
+            self.tasks_created = True
+            
+        else:
+            self.scheduler.resume()
+            
         self.client.api.server_state(self.server_id, ServerStates.ACTIVE)
         self.server.say_all('------- CFTools --------')
         self.trigger_callback('tool', 'started')
     
     def _cb_rcon_authenticated_failed(self, *_):
-        self.client.api.server_state(self.server_id, ServerStates.STOPPED,  'rcon_authentication_failed')
         self.stop('rcon_authentication_failed')
         self.client.kill_worker(self.server_id)
+        
+    def _cb_error_connection_refused(self, data):
+        self.client.api.server_state(self.server_id, ServerStates.STOPPED, reason='rcon_connection_refused')
+        self.client.kill_worker(self.server_id, 'rcon_connection_refused')
+        
+    def _cb_error_connection_closed(self, data):
+        self.halt('rcon_connection_closed')
+        self.start()
+        
+    def _cb_error_checkalive_failed(self, *_):
+        self.checkalive_fails += 1
+        if self.checkalive_fails >= 3:
+            self.checkalive_fails = 0
+            self.server.trigger_callback('error', 'connection_closed')
         
     def _cb_player_connected(self, player_data):
         player_data = {
@@ -270,12 +297,3 @@ class OmegaWorker(Callback):
             'player': player, 
             'message_data': chat_data
         })
-        
-    def _cb_error_connection_refused(self, data):
-        self.client.api.server_state(self.server_id, ServerStates.STOPPED, reason='rcon_connection_refused')
-        self.client.kill_worker(self.server_id, 'rcon_connection_refused')
-        
-    def _cb_error_connection_closed(self, data):
-        self.trigger_callback('tool', 'halted', 'connection_lost')
-        self.stop('connection_lost')
-        self.setup_rcon()

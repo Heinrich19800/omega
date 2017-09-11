@@ -14,6 +14,7 @@ import os
 from api.steam import SteamAPI
 from api.omega import OmegaAPI
 from api.iphub import IPHubAPI
+from api.ip    import resolve_ip
 
 from lib.worker import OmegaWorker
 from lib.callback import Callback
@@ -25,6 +26,10 @@ CRITICAL_SERVICES = [
     'omega_master', 
     'cloud_configuration'
 ]
+
+# CFTools Steam GroupID
+# Must be the primary group of the profile to provide Staff rights
+CFTOOLS_STAFF_PERM_GROUP = '103582791459898589'
 
 
 class OmegaClient(threading.Thread):
@@ -40,14 +45,18 @@ class OmegaClient(threading.Thread):
         self.servers = {}
  
         self.api = OmegaAPI(identity=client_id, key=client_key, error_mode=ERROR_MODE)
+        self.cftools_resolve_ip = resolve_ip
         
         print 'Registering @ licensing server...'
         if not self.api.register().get('success'):
             print 'Could not register. Shutting down'
             raise SystemExit
             
-        self.iphub = IPHubAPI(iphub_api_key)
+        self.iphub = IPHubAPI()
+        self.iphub.update_api_key(iphub_api_key)
         self.steam = SteamAPI(steam_api_key)
+        
+        self.cftools_staff = self.steam.retrieve_group_members(CFTOOLS_STAFF_PERM_GROUP)
         
         print 'Retrieving client information...'
         response = self.api.client_start(self.client_id)
@@ -79,9 +88,7 @@ class OmegaClient(threading.Thread):
             if order.get('action') == 'start':
                 server_id = order.get('server_id')
                 self.servers[server_id]['config']['stopped'] = False
-                    
-                if not self.workers.get(server_id):
-                    self.start_worker(server_id)
+                self.start_worker(server_id)
                     
             elif order.get('action') == 'stop':
                 server_id = order.get('server_id')
@@ -135,7 +142,6 @@ class OmegaClient(threading.Thread):
             return
         
         self.workers[server_id].stop(reason)
-        del self.workers[server_id]
         
     def restart_worker(self, server_id):
         config = self.servers.get(server_id)
@@ -143,4 +149,8 @@ class OmegaClient(threading.Thread):
         self._setup_server(server_id, config)
         
     def start_worker(self, server_id):
-        self.workers[server_id] = OmegaWorker(server_id, self.servers[server_id], self)
+        if server_id not in self.workers:
+            self.workers[server_id] = OmegaWorker(server_id, self.servers[server_id], self)
+        
+        else:
+            self.workers[server_id].start()

@@ -1,6 +1,16 @@
-
-
 class Callback(object):
+    def verify_existance(self, endpoint, action):
+        if not hasattr(self, '_callbacks'):
+            return False
+            
+        if endpoint not in self._callbacks:
+            return False
+    
+        if action not in self._callbacks[endpoint]:
+            return False
+            
+        return True
+    
     def create_callback(self, endpoint, action):
         if not hasattr(self, '_callbacks'):
             self._callbacks = {}
@@ -27,6 +37,9 @@ class Callback(object):
         self._callbacks[endpoint][action].append(method_reference)
 
     def trigger_callback(self, endpoint, action, data={}):
+        if not self.verify_existance(endpoint, action):
+            print 'Error while executing callback: {}-{}: non existant'.format(endpoint, action)
+            
         try:
             for method in self._callbacks.get(endpoint).get(action):
                 method(data)

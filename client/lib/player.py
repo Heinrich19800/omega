@@ -1,9 +1,5 @@
 from time import time
 
-# CFTools Steam GroupID
-# Must be the primary group of the profile to provide Staff rights
-CFTOOLS_STAFF_PERM_GROUP = '103582791459898589'
-
 
 class OmegaPlayer(object):
     def __init__(self, worker, slot, name, ip):
@@ -22,32 +18,16 @@ class OmegaPlayer(object):
         self.session_start = time()
         
         self.ip = self.build_law_conform_ip(ip)
-        if self.worker.client.iphub.available:
-            self.ip_info = self.worker.client.iphub.request(self.ip)
+        self.ip_info = self.worker.client.cftools_resolve_ip(self.ip)
 
-        else:
-            self.ip_info = {
-                'country_name': 'IPHub API unavailable',
-                'country_code': 'XYZ',
-                'block': -1
-            }
-            
     @property
     def country_name(self):
-        return self.ip_info.get('countryName')
+        return self.ip_info.get('country_name')
         
     @property
     def country_code(self):
-        return self.ip_info.get('countryCode')
+        return self.ip_info.get('country_code')
         
-    @property
-    def isp(self):
-        return self.ip_info.get('isp')
-        
-    @property
-    def uses_vpn(self):
-        return True if self.ip_info.get('block') in [1] else False
-            
     def fix_name(self, name):
         return ''.join([i if ord(i) < 128 else ' ' for i in name])
         
@@ -79,7 +59,7 @@ class OmegaPlayer(object):
         self.check_ban()
         self.check_permission_level()
 
-    def process_player_data(self): #TODO: Implement local database
+    def process_player_data(self):
         timestamp = int(time())
         player_data = {
             'be_guid': self.guid,
@@ -105,20 +85,24 @@ class OmegaPlayer(object):
             self.player_data = player_data
             self.server_data = None
             self.omega_id = response.get('data').get('omega_id')
+            self.steam = None
                 
         else:
             self.player_data = response.get('data').get('player')
             self.server_data = response.get('data').get('server')
             self.omega_id = response.get('data').get('omega_id')
+            if self.worker.client.steam.available and self.player_data.get('steamid'):
+                steam_profile = self.worker.client.steam.profile(self.player_data.get('steamid'))
+                self.steam = steam_profile
             
-    def check_ban(self): #TODO: Implement local database
+    def check_ban(self):
         if self.omega_id and self.server_data:
             ban_data = self.server_data.get('banned_state')
             
             if ban_data:
                 self.kick('You are banned from this server! ({})'.format(ban_data.get('reason')))
                 
-    def check_globalban(self): #TODO: Check if CFTools services enabled
+    def check_globalban(self):
         if self.player_data.get('globalban').get('status'):
             if self.worker.config.get('accept_globalbans'):
                 self.kick('CFTools Globalban ({})'.format(self.player_data.get('globalban').get('reason')))
@@ -126,7 +110,7 @@ class OmegaPlayer(object):
             elif self.player_data.get('globalban').get('enforceable'):
                 self.kick('[ENFORCED] CFTools Globalban ({})'.format(self.player_data.get('globalban').get('reason')))
                 
-    def check_whitelist(self): #TODO: Implement local database
+    def check_whitelist(self):
         if self.worker.hive != 'private':
             return self.worker.trigger_callback('tool', 'error', 'Whitelist enabled but hive Public')
         
@@ -143,11 +127,9 @@ class OmegaPlayer(object):
     def check_permission_level(self):
         if self.omega_id and self.server_data:
             self.permission_level = self.server_data.get('admin_state').get('level') if self.server_data.get('admin_state') else 'player'
-            if self.worker.client.steam.available and self.permission_level == 'player' and self.player_data.get('steamid'):
-                steam_profile = self.worker.client.steam.profile(self.player_data.get('steamid'))
-                if steam_profile:
-                    if steam_profile.get('primaryclanid') == CFTOOLS_STAFF_PERM_GROUP:
-                        self.permission_level = 'cftools_staff'
+            if self.player_data.get('steamid'):
+                if self.player_data.get('steamid') in self.worker.client.cftools_staff:
+                    self.permission_level = 'cftools_staff'
 
         else:
             self.permission_level = 'player'
@@ -165,7 +147,6 @@ class OmegaPlayer(object):
         message = str(message)
         message = message.replace('%NAME%', self.name) 
         message = message.replace('%IP%',   self.ip)
-        message = message.replace('%ISP%',   self.isp)
         message = message.replace('%GUID%', self.guid)
         message = message.replace('%OMEGAID%', self.omega_id)
         message = message.replace('%RANK%', self.permission_level.capitalize())
@@ -177,4 +158,3 @@ class OmegaPlayer(object):
             message = message.replace('%HIVE%', self.worker.hive) 
             message = message.replace('%MAXPLAYERS%', str(self.worker.max_players))
         return message
-        

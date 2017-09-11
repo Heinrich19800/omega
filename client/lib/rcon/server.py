@@ -8,57 +8,59 @@ import re
 from lib.callback import Callback
 from lib.rcon.protocol import BattleEyeRconProtocol
 
-
-class BattleEyeRcon(threading.Thread, Callback):
-    #TODO: move this somewhere else?
-    _regex = {
-        'player_guid': {
-            'regex': r'Verified GUID \((.*)\) of player #([0-9]+) (.*)',
-            'identification_string': ['Verified GUID']
-        },
-        'player_unverified_guid': {
-            'regex': r'Player #([0-9]+) (.*) - GUID: (.*)',
-            'identification_string': ['Player #', 'GUID:']
-        },
-        'player_disconnect': {
-            'regex': r'Player #([0-9]+) (.*) disconnected',
-            'identification_string': ['Player #', 'disconnected']
-        },
-        'player_connect': {
-            'regex': r'Player #([0-9]+) (.*) \((.*):(.*)\) connected',
-            'identification_string': ['Player #', ') connected']
-        },
-        'player_list': {
-            'regex': r'(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)',
-            'identification_string': ['Players on server:']
-        },
-        'be_kick': {
-            'regex': r'\((.*)\) has been kicked by BattlEye: (.*) \((.*)\)',
-            'identification_string': ['has been kicked by BattlEye']
-        },
-        'rcon_message': {
-            'regex': r'RCon admin #([0-9]+): \((.*)\) (.*)',
-            'identification_string': ['RCon admin #', ': ']
-        },
-        'rcon_admin_login': {
-            'regex': r'RCon admin #([0-9]+) \((.*)\) logged in',
-            'identification_string': ['RCon admin #', 'logged in']
-        },
-        'unable_to_recieve': {
-            'regex': r'(.*)',
-            'identification_string': ['Player is unable to receive the message']
-        },
-        'connected_be_master': {
-            'regex': r'(.*)',
-            'identification_string': ['Connected to BE Master']
-        }
+REGEX = {
+    'player_guid': {
+        'regex': r'Verified GUID \((.*)\) of player #([0-9]+) (.*)',
+        'identification_string': ['Verified GUID']
+    },
+    'player_unverified_guid': {
+        'regex': r'Player #([0-9]+) (.*) - GUID: (.*)',
+        'identification_string': ['Player #', 'GUID:']
+    },
+    'player_disconnect': {
+        'regex': r'Player #([0-9]+) (.*) disconnected',
+        'identification_string': ['Player #', 'disconnected']
+    },
+    'player_connect': {
+        'regex': r'Player #([0-9]+) (.*) \((.*):(.*)\) connected',
+        'identification_string': ['Player #', ') connected']
+    },
+    'player_list': {
+        'regex': r'(\d+)\s+(.*?)\s+([0-9]+)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)',
+        'identification_string': ['Players on server:']
+    },
+    'be_kick': {
+        'regex': r'\((.*)\) has been kicked by BattlEye: (.*) \((.*)\)',
+        'identification_string': ['has been kicked by BattlEye']
+    },
+    'rcon_message': {
+        'regex': r'RCon admin #([0-9]+): \((.*)\) (.*)',
+        'identification_string': ['RCon admin #', ': ']
+    },
+    'rcon_admin_login': {
+        'regex': r'RCon admin #([0-9]+) \((.*)\) logged in',
+        'identification_string': ['RCon admin #', 'logged in']
+    },
+    'unable_to_recieve': {
+        'regex': r'(.*)',
+        'identification_string': ['Player is unable to receive the message']
+    },
+    'connected_be_master': {
+        'regex': r'(.*)',
+        'identification_string': ['Connected to BE Master']
     }
+}
 
+TIMEOUT_LIMIT = 10
+RETRY_LIMIT = 6
+
+
+class DayZServer(Callback):
     def __init__(self, host, port, password):
-        threading.Thread.__init__(self)
-        
-        self._keepalive_interval = 10
-        self._authenticated = None
+        self.authenticated = None
+        self.running = False
+        self.active = True
+        self.alive = time.time()
 
         self.create_callbacks('connection', [
             'lost',
@@ -87,33 +89,35 @@ class BattleEyeRcon(threading.Thread, Callback):
         ])
         
         self.create_callbacks('error', [
+            'error',
             'critical',
             'connection_refused',
-            'connection_closed'
+            'connection_closed',
+            'checkalive_failed'
         ])
-        
-        self.alive = time.time()
-        self.running = False
-        
-        self.host = str(host)
-        self.port = int(port)
-        self.password = password
-        self.rcon = BattleEyeRconProtocol(self.host, self.port, self.password)
-        self.setDaemon(True)
         
         self.register_callback('connection', 'authenticated', self._callback_authenticated)
         self.register_callback('connection', 'authentication_failed', self._callback_authentication_failed)
         self.register_callback('connection', 'keepalive_acknowledged', self._callback_keepalive_acknowledged)
         self.register_callback('data', 'recieved', self._callback_data_recieved)
+        
+        self.host = str(host)
+        self.port = int(port)
+        self.password = password
+        self.rcon = BattleEyeRconProtocol(self.host, self.port, self.password)
+        self.spawn_listener()
 
-    def shutdown_server(self):
+    def shutdown(self):
         self.rcon.command('shutdown')
 
-    def restart_server(self):
+    def restart(self):
         self.rcon.command('restartserver')
         
     def request_playerlist(self):
         self.rcon.command('players')
+        
+    def monitor(self, interval):
+        self.rcon.command('#monitor {}'.format(interval))
 
     def kick_player(self, slot, reason='You have been kicked from the server'):
         command = 'kick {} {}'.format(slot, reason)
@@ -154,20 +158,29 @@ class BattleEyeRcon(threading.Thread, Callback):
         
     def checkalive(self):
         if time.time()-self.alive >= 30:
-            self.stop()
-            while self.running:
-                time.sleep(.05) #wait for thread to exit (50 ms)
-
-            return self.trigger_callback('error', 'connection_closed')
+            return self.trigger_callback('error', 'checkalive_failed')
             
     def keepalive(self):
         self.rcon.keepalive()
 
-    def stop(self):
-        self._active = False
+    def spawn_listener(self):
+        self.listener = threading.Thread(target=self.run)
+        self.listener.setDaemon(True)
+
+    def stop(self, wait=True):
+        self.active = False
+        while (wait and self.running):
+            time.sleep(.05)
+        
+    def start(self):
+        if not self.active:
+            self.spawn_listener()
+            self.active = True
+            self.authenticated = None
+
+        self.listener.start()
         
     def run(self):
-        self._active = True
         timeouts = 0
         retries = 0
         multipacket = {
@@ -176,28 +189,29 @@ class BattleEyeRcon(threading.Thread, Callback):
             'data': ''
         }
         self.running = True
-        while self._active:
+        self.rcon.connect()
+        self.rcon.login()
+        while self.active:
             try:
                 raw_data = self.rcon.recieve_data()
 
             except socket.timeout as e:
-                if not self._authenticated:
+                if not self.authenticated:
                     timeouts += 1
                     
-                    if timeouts >= 60:
+                    if timeouts >= TIMEOUT_LIMIT:
                         timeouts = 0
                         retries += 1
                         self.rcon.connect()
                         self.rcon.login()
                         
-                    if retries >= 60:
+                    if retries >= RETRY_LIMIT:
                         return self.trigger_callback('error', 'connection_refused')
 
                 continue
             
             except socket.error as e:
                 if e.errno == 111:
-                    self.stop()
                     return self.trigger_callback('error', 'connection_refused')
 
             except Exception as e:
@@ -225,7 +239,7 @@ class BattleEyeRcon(threading.Thread, Callback):
                 continue
             
             if response.get('message_type') == 0:
-                if self._authenticated == None:
+                if self.authenticated == None:
                     if response.get('sequence') == 1:
                         self.trigger_callback('connection', 'authenticated')
 
@@ -251,17 +265,17 @@ class BattleEyeRcon(threading.Thread, Callback):
         self.alive = time.time() 
 
     def _callback_authenticated(self, *_):
-        self._authenticated = True
+        self.authenticated = True
         self.request_playerlist()
 
     def _callback_authentication_failed(self, *_):
-        self._authenticated = False
+        self.authenticated = False
 
     def _callback_data_recieved(self, data):
         regex_chat = r'\((.*)\) (.*): (.*)'
         regex_lobby = r'(\d+)\s+(.*?)\s(.*?)\s+([A-z0-9]{32})\(.*?\)\s(.*)\s\((.*)\)'
         regex_ingame = r'(\d+)\s+(.*?)\s(.*?)\s+([A-z0-9]{32})\(.*?\)\s(.*)'
-        for event_type, event in self._regex.iteritems():
+        for event_type, event in REGEX.iteritems():
             valid = True
             for identification_string in event.get('identification_string'):
                 if identification_string not in data:

@@ -4,6 +4,8 @@ from time import time
 MODULE_NAME = 'ConsoleLogging'
 MODULE_AUTHOR = 'philippj'
 
+DEFAULT_SERVERNAME = 'default servername'
+
 
 class ConsoleLogger(object):
     def __init__(self, worker):
@@ -27,7 +29,7 @@ class ConsoleLogger(object):
         
     @property
     def _id(self):
-        if self.worker.servername and self.worker.servername != self.worker.DEFAULT_SERVERNAME:
+        if self.worker.servername and self.worker.servername != DEFAULT_SERVERNAME:
             return self.worker.servername
             
         else:

@@ -17,6 +17,15 @@ class Scheduler(threading.Thread):
         self.last = time()
         self.start()
         
+    def stop(self):
+        self.active = False
+    
+    def suspend(self):
+        self.active = None
+        
+    def resume(self):
+        self.active = True
+        
     def add_task(self, function, execute_time, repeating=False, **params):
         task_id = str(self._id)
         self.queue[task_id] = {
@@ -49,20 +58,21 @@ class Scheduler(threading.Thread):
 
     def run(self):
         finished_tasks = []
-        while self.active:
+        while (self.active is True or self.active is None):
             finished_tasks = []
             timestamp = time()
-            for task_id, task in dict(self.queue).iteritems():
-                if timestamp >= task.get('execute_time'):
-                    result = self.execute(task, timestamp)
-                    if result == True:
-                        finished_tasks.append(task_id)
-                        
-                    else:
-                        self.queue[task_id] = result
-                        
-            for task_id in finished_tasks:
-                del self.queue[task_id]
+            if self.active != None:
+                for task_id, task in dict(self.queue).iteritems():
+                    if timestamp >= task.get('execute_time'):
+                        result = self.execute(task, timestamp)
+                        if result == True:
+                            finished_tasks.append(task_id)
+                            
+                        else:
+                            self.queue[task_id] = result
+                            
+                for task_id in finished_tasks:
+                    del self.queue[task_id]
                 
             for task_id in list(self.killed_tasks):
                 del self.queue[task_id]
