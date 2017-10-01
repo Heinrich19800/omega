@@ -26,3 +26,22 @@ class SteamAPI(object):
 
         return members
         
+    def steam_server_info(self, host, port):
+        url = 'https://api.steampowered.com/IGameServersService/GetServerList/v1/?key={}&filter=\gameaddr\{}:{}'.format(self.api_key, host, port)
+        response = requests.get(url).json()
+        return response['response']['servers'][0] or {}
+        
+    def gametime(self, steamid, appid=221100):
+        url = 'http://api.steampowered.com/IPlayerService/GetOwnedGames/v0001/?key={}&steamid={}&format=json&include_appinfo=1'.format(self.api_key, steamid)
+        
+        try:
+            data = requests.get(url).json()['response']['games']
+            
+        except:
+            return {}
+        
+        for game in data:
+            if game.get('appid') == appid:
+                return game
+                
+        return {}

@@ -1,3 +1,6 @@
+import threading
+
+
 class Callback(object):
     def verify_existance(self, endpoint, action):
         if not hasattr(self, '_callbacks'):
@@ -35,15 +38,13 @@ class Callback(object):
     def register_callback(self, endpoint, action, method_reference):
         self.create_callback(endpoint, action)
         self._callbacks[endpoint][action].append(method_reference)
-
+        
+    def async_trigger_callback(self, endpoint, action, data={}):
+        threading.Thread(target=self.trigger_callback, args=[endpoint, action, data]).start()
+        
     def trigger_callback(self, endpoint, action, data={}):
         if not self.verify_existance(endpoint, action):
-            print 'Error while executing callback: {}-{}: non existant'.format(endpoint, action)
+            print 'Error while executing callback: {}-{}: non existent'.format(endpoint, action)
             
-        try:
-            for method in self._callbacks.get(endpoint).get(action):
-                method(data)
-        
-        except Exception as e: #TODO: remove at some point
-            print 'Error while executing callback: {}-{}: {}'.format(endpoint, action, e)
-            raise
+        for method in self._callbacks.get(endpoint).get(action):
+            method(data)

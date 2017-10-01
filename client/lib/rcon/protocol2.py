@@ -5,7 +5,7 @@ import binascii
 import time
 import re
 
-BUFFER_SIZE = 2048
+BUFFER_SIZE = 1024*4
 
 
 class BattleEyeRconProtocol(object):
@@ -38,14 +38,13 @@ class BattleEyeRconProtocol(object):
     def connect(self):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.connect((self.host, self.port))
-        self.socket.settimeout(1)
+        self.socket.settimeout(45)
 
     def decode_data(self, data):
         response = {
             'message_type': -1, 
             'sequence': -1, 
-            'data': '',
-            'multipacket': 0
+            'data': ''
         }
 	    
         if data[0:2] != b'BE':

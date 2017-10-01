@@ -3,8 +3,9 @@ import sys
 import threading
 import importlib
 import time
+import re
 
-from lib.rcon.server import DayZServer
+from lib.rcon.server2 import DayZServer, RCON_REGEX_LIST, RCON_PLAYERLIST_REGEX_EXTRA
 from lib.player import OmegaPlayer
 from lib.callback import Callback
 from lib.scheduler import Scheduler
@@ -24,9 +25,13 @@ class OmegaWorker(Callback):
         self.server_id = server_id
         self.client = client
         
+        self.server_os = 'w'
+        self.gamemap = 'chernarus+'
         self.hive = 'public'
         self.servername = DEFAULT_SERVERNAME
         self.max_players = 1
+        self.gametime = '0:00'
+        self.time_acceleration = 0
         
         self._update(server_data)
         
@@ -48,15 +53,18 @@ class OmegaWorker(Callback):
             'halted',
             'error',
             'config_update',
-            'module_update'
+            'module_update',
+            'notice'
         ])
         
         self.client.api.server_state(self.server_id, ServerStates.STARTING)
         
         self.setup_rcon()
+        
         self.scheduler = Scheduler()
         self.tasks_created = False
         self.checkalive_fails = 0
+        self.reconnects = 0
         
         self.start()
         
@@ -97,13 +105,26 @@ class OmegaWorker(Callback):
             
     def _update(self, server_data):
         self.config = server_data.get('config')
-        self.container = server_data.get('container')
+        self.container = self.config.get('container')
         self.steam_data = server_data.get('steam')
         
         if self.steam_data:
-            if 'privHive' in self.steam_data.get('restricted').get('gametype'):
-                self.hive = 'private'
+            gametype_params = self.steam_data.get('restricted').get('gametype').split(',')
+            
+            self.hive = 'private' if 'privHive' in gametype_params else 'public'
+            self.third_pp = False if 'no3rd' in gametype_params else True
+            
+            if self.hive == 'public':
+                self.gametime = gametype_params[5]
+                self.time_acceleration = int(float(gametype_params[4].replace('etm', '')))
                 
+            else:
+                self.gametime = gametype_params[6]
+                self.time_acceleration = int(float(gametype_params[5].replace('etm', '')))
+
+            self.server_os = self.steam_data.get('restricted').get('os')
+            self.gamemap = self.steam_data.get('restricted').get('map')
+
             self.servername = self.steam_data.get('name')
             self.max_players = int(self.steam_data.get('max_players'))
         
@@ -114,6 +135,14 @@ class OmegaWorker(Callback):
                 return player
                 
         return None
+        
+    def find_player_by_name(self, name):
+        players = []
+        for slot, player in self.players.iteritems():
+            if name in player.name:
+                players.append(player)
+                
+        return players
         
     def get_player_by_omega_id(self, omega_id):
         for slot, player in self.players.iteritems():
@@ -153,6 +182,7 @@ class OmegaWorker(Callback):
         self.server = DayZServer(self.config.get('host'), self.config.get('port'), self.config.get('password'))
         self.server.register_callback('connection', 'authenticated', self._cb_rcon_authenticated)
         self.server.register_callback('connection', 'authentication_failed', self._cb_rcon_authenticated_failed)
+        self.server.register_callback('connection', 'keepalive_acknowledged', self._cb_rcon_keepalive_acknowledged)
         self.server.register_callback('event', 'player_connect', self._cb_player_connected)
         self.server.register_callback('event', 'player_disconnect', self._cb_player_disconnected)
         self.server.register_callback('event', 'player_guid', self._cb_player_guid)
@@ -188,9 +218,8 @@ class OmegaWorker(Callback):
         
     def _cb_rcon_authenticated(self, *_):
         if not self.tasks_created:
-            self.scheduler.add_task(self.server.keepalive, 0, 15)
-            self.scheduler.add_task(self.server.checkalive, 0, 27)
-            self.scheduler.add_task(self.server.request_playerlist, 30, 15)
+            self.scheduler.add_task(self.server.keepalive, 0, 10)
+            self.scheduler.add_task(self.server.request_playerlist, 30, 30)
             self.tasks_created = True
             
         else:
@@ -198,6 +227,16 @@ class OmegaWorker(Callback):
             
         self.client.api.server_state(self.server_id, ServerStates.ACTIVE)
         self.server.say_all('------- CFTools --------')
+        self.server.say_all('Starting up on {}'.format(self.server_id))
+        self.server.say_all('{} server, time: {} (acceleration: {}), max players: {}, map: {}'.format(
+            'windows' if self.server_os == 'w' else 'linux',
+            self.gametime,
+            self.time_acceleration,
+            self.max_players,
+            self.gamemap
+        ))
+        self.server.say_all('------- CFTools --------')
+        self.reconnects = 0
         self.trigger_callback('tool', 'started')
     
     def _cb_rcon_authenticated_failed(self, *_):
@@ -210,11 +249,19 @@ class OmegaWorker(Callback):
         
     def _cb_error_connection_closed(self, data):
         self.halt('rcon_connection_closed')
+        self.reconnects += 1
+        if self.reconnects == 5:
+            return self.server.trigger_callback('error', 'connection_refused')
+            
         self.start()
+        
+    def _cb_rcon_keepalive_acknowledged(self, *_):
+        self.checkalive_fails = 0
         
     def _cb_error_checkalive_failed(self, *_):
         self.checkalive_fails += 1
-        if self.checkalive_fails >= 3:
+        self.trigger_callback('tool', 'error', '_cb_error_checkalive_failed ({}/2)'.format(self.checkalive_fails))
+        if self.checkalive_fails >= 2:
             self.checkalive_fails = 0
             self.server.trigger_callback('error', 'connection_closed')
         
@@ -252,10 +299,45 @@ class OmegaWorker(Callback):
         }
         if player_data.get('slot') not in self.players:
             return
-        self.players[player_data.get('slot')].set_guid(player_data.get('guid'))
-        self.trigger_callback('player', 'guid', self.players[player_data.get('slot')])
         
-    def _cb_player_list(self, players):
+        self.players[player_data.get('slot')].set_guid(player_data.get('guid'))
+        
+        if player_data.get('slot') in self.players:
+            self.trigger_callback('player', 'guid', self.players[player_data.get('slot')])
+        
+    def _cb_player_list(self, raw_players):
+        players = []
+        raw_players = raw_players.split('\n')
+        del raw_players[0:3]
+        del raw_players[-1]
+        
+        for player in raw_players:
+            lobby = True
+            player_data = re.search(RCON_PLAYERLIST_REGEX_EXTRA.get('player_list_lobby'), player)
+            
+            if player_data == None:
+                lobby = False
+                player_data = re.search(RCON_PLAYERLIST_REGEX_EXTRA.get('player_list_ingame'), player)
+                
+            if player_data == None:
+                continue
+            
+            else:
+                player_data = player_data.groups()
+                    
+            try:
+                players.append({
+                    'slot': player_data[0],
+                    'ip': player_data[1].split(':')[0],
+                    'ping': int(player_data[2]),
+                    'guid': player_data[3],
+                    'name': player_data[4],
+                    'lobby': lobby
+                })
+                
+            except:
+                continue
+                        
         for player in players:
             if player.get('slot') not in self.players or player.get('guid') != self.players[player.get('slot')].guid:
                 if self.first_players_fetch:
@@ -273,11 +355,19 @@ class OmegaWorker(Callback):
         
         self.first_players_fetch = False
 
+    def _fake_kick_event(self, player): # Kick event for public hives, for printing reason
+        kick_data = {
+            'player': player,
+            'reason': player.reason
+        }
+
+        self.trigger_callback('player', 'kick', kick_data)
+        del self.players[kick_data.get('player').slot]
+
     def _cb_player_kick(self, kick_data):
         kick_data = {
             'player': self.get_player_by_guid(kick_data[0]),
-            'method': kick_data[1],
-            'reason': kick_data[2]
+            'reason': kick_data[1]
         }
 
         self.trigger_callback('player', 'kick', kick_data)

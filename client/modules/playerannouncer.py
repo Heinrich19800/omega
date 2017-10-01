@@ -35,14 +35,14 @@ class PlayerAnnouncer(object):
             self.fetch_config()
         
     def player_computed(self, player):
-        if not self.config.get('active'):
+        if not self.config.get('join'):
             return
         
         msg = player.construct_message(self.config.get('join_message'))
         self.worker.server.say_all(msg)
         
     def periodic_message(self, *_):
-        if not self.config.get('active') or not self.config.get('periodic'):
+        if not self.config.get('periodic'):
             return
         
         msg = self.worker.construct_message(self.config.get('periodic_message'))

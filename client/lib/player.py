@@ -1,5 +1,10 @@
 from time import time
 
+FIRST_TIME_MESSAGES = """Hello %NAME%! This is your first visit on a CFTools enabled Server!
+    CFTools enables server admins to better administrate their server.
+    Whenever you play on any CFTools enabled server, some of your data will be saved.
+    You can terminate your account at <omega.cftools.de>."""
+    
 
 class OmegaPlayer(object):
     def __init__(self, worker, slot, name, ip):
@@ -10,11 +15,16 @@ class OmegaPlayer(object):
         
         self.player_data = None
         self.omega_id = ''
+        self.permission_level = 'player'
+        
+        self.steam = False
+        self.steam_profile_state = 'public'
+        self.dayz_playtime = -1
         
         self.worker = worker
 
         self.slot = slot
-        self.name = self.fix_name(name)
+        self.name = u'{}'.format(name)
         self.session_start = time()
         
         self.ip = self.build_law_conform_ip(ip)
@@ -44,11 +54,15 @@ class OmegaPlayer(object):
     def __del__(self):
         playtime = time() - self.session_start
         if self.omega_id:
-            self.worker.client.api.update_player_state(self.omega_id, state=False, server_id=self.worker.server_id, kicked=self.kicked, reason=self.reason)
+            self.worker.client.api.update_player_state(self.omega_id, state=False, server_id=self.worker.server_id, kicked=self.kicked, reason=self.reason, playtime=playtime)
 
     def set_guid(self, guid):
         self.guid = guid
         self.process_player_data()
+        
+        if self.kicked:
+            return
+        
         if self.omega_id:
             self.worker.client.api.update_player_state(self.omega_id, state=True, server_id=self.worker.server_id, ip=self.ip, name=self.name, guid=self.guid)
             
@@ -57,6 +71,10 @@ class OmegaPlayer(object):
             
         self.check_globalban()
         self.check_ban()
+        
+        if self.kicked:
+            return
+        
         self.check_permission_level()
 
     def process_player_data(self):
@@ -84,16 +102,35 @@ class OmegaPlayer(object):
             response = self.worker.client.api.player_create(self.guid, player_data)
             self.player_data = player_data
             self.server_data = None
+            if not response.get('success') or 'omega_id' not in response.get('data'):
+                self.worker.trigger_callback('tool', 'error', '{}: omega_id for {} could not be retrieved, please contact an administrator'.format(self.name, self.guid))
+                return self.kick('[CFTools] Corrupted player information')
+                
             self.omega_id = response.get('data').get('omega_id')
-            self.steam = None
+            steamid = response.get('data').get('steamid')
+            steam_profile = self.worker.client.steam.profile(steamid)
+            self.steam = steam_profile
+            self.say(FIRST_TIME_MESSAGES)
                 
         else:
             self.player_data = response.get('data').get('player')
+            if 'terminated' in self.player_data:
+                self.worker.trigger_callback('tool', 'error', '{}: Account has been terminated'.format(self.name))
+                return self.kick('[CFTools] Account terminated. Server access denied.') 
+                
             self.server_data = response.get('data').get('server')
             self.omega_id = response.get('data').get('omega_id')
             if self.worker.client.steam.available and self.player_data.get('steamid'):
                 steam_profile = self.worker.client.steam.profile(self.player_data.get('steamid'))
                 self.steam = steam_profile
+                self.steam_profile_state = 'public' if steam_profile['communityvisibilitystate'] == 3 else 'private'
+                # playtime = self.worker.client.steam.gametime(self.player_data.get('steamid'))
+                playtime = False # Will be a restricted feature. Needs way to much resources depending on how many games a player has/plays
+                if playtime:
+                    self.dayz_playtime = playtime.get('playtime_forever')/60
+                    
+                else:
+                    self.dayz_playtime = -1
             
     def check_ban(self):
         if self.omega_id and self.server_data:
@@ -137,7 +174,14 @@ class OmegaPlayer(object):
     def kick(self, reason='You have been kicked from the server'):
         self.kicked = True
         self.reason = self.construct_message(reason)
-        self.worker.server.kick_player(self.slot, self.reason)
+        if self.worker.hive == 'private':
+            self.worker.server.kick_player(self.slot, self.reason)
+            
+        else:
+            message = u'[CFTools] {} has been kicked for: {}'.format(self.name, self.reason)
+            self.worker.server.say_all(message)
+            self.worker.server.kick_name(self.name)
+            self.worker._fake_kick_event(self)
         
     def say(self, message=''):
         message = self.construct_message(message)
